@@ -1,5 +1,7 @@
 #include "context.hh"
 
+#include "vertex.hh"
+
 #include <algorithm>
 #include <fcntl.h>
 #include <map>
@@ -28,6 +30,12 @@ const std::vector<const char*> validation_layers = {
 
 const std::vector<const char*> required_device_extensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+};
+
+const std::vector<vertex> vertices = {
+    { { 0.0f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
+    { { 0.5f, 0.5f }, { 0.0f, 1.0f, 0.0f } },
+    { { -0.5f, 0.5f }, { 0.0f, 0.0f, 1.0f } }
 };
 
 /// Choose the best surface format.
@@ -137,6 +145,9 @@ void vulkan_fini() {
 vk::context::~context() {
     cleanup_swap_chain();
 
+    vkDestroyBuffer(device, vertex_buffer, nullptr);
+    vkFreeMemory(device, vertex_buffer_memory, nullptr);
+
     vkDestroyPipeline(device, graphics_pipeline, nullptr);
     vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
 
@@ -182,8 +193,8 @@ vk::context::context(int wd, int ht, std::string_view title) {
 
     /// Tell GLFW to notify us when the window is resized.
     glfwSetWindowUserPointer(window, this);
-    glfwSetFramebufferSizeCallback(window, [](GLFWwindow* w, int, int) {
-        auto* ctx = (vk::context*) glfwGetWindowUserPointer(w);
+    glfwSetFramebufferSizeCallback(window, [](GLFWwindow* nonnull w, int, int) {
+        auto* ctx = (vk::context * nonnull) glfwGetWindowUserPointer(w);
         ctx->resized = true;
     });
 
@@ -278,6 +289,7 @@ vk::context::context(int wd, int ht, std::string_view title) {
     create_graphics_pipeline();
     create_framebuffers();
     create_command_pool();
+    create_vertex_buffer();
     create_command_buffers();
     create_sync_objects();
 }
@@ -491,8 +503,15 @@ void vk::context::create_graphics_pipeline() {
     dynamic_state_info.pDynamicStates = dynamic_states.data();
 
     /// Vertex input.
+    auto binding_description = vertex::binding_description();
+    auto attribute_descriptions = vertex::attribute_descriptions();
+
     VkPipelineVertexInputStateCreateInfo vertex_input_info{};
     vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertex_input_info.vertexBindingDescriptionCount = 1;
+    vertex_input_info.pVertexBindingDescriptions = &binding_description;
+    vertex_input_info.vertexAttributeDescriptionCount = u32(attribute_descriptions.size());
+    vertex_input_info.pVertexAttributeDescriptions = attribute_descriptions.data();
 
     /// Input assembly.
     VkPipelineInputAssemblyStateCreateInfo input_assembly_info{};
@@ -603,6 +622,33 @@ void vk::context::create_command_pool() {
     assert_success(vkCreateCommandPool(device, &pool_info, nullptr, &command_pool), "failed to create command pool");
 }
 
+void vk::context::create_vertex_buffer() {
+    /// Create the buffer.
+    VkBufferCreateInfo buffer_info{};
+    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_info.size = sizeof(vertices[0]) * vertices.size();
+    buffer_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    assert_success(vkCreateBuffer(device, &buffer_info, nullptr, &vertex_buffer), "failed to create vertex buffer");
+
+    /// Allocate the buffer.
+    VkMemoryRequirements mem_requirements;
+    vkGetBufferMemoryRequirements(device, vertex_buffer, &mem_requirements);
+
+    VkMemoryAllocateInfo alloc_info{};
+    alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_info.allocationSize = mem_requirements.size;
+    alloc_info.memoryTypeIndex = find_memory_type(mem_requirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    assert_success(vkAllocateMemory(device, &alloc_info, nullptr, &vertex_buffer_memory), "failed to allocate vertex buffer memory");
+    vkBindBufferMemory(device, vertex_buffer, vertex_buffer_memory, 0);
+
+    /// Copy the data to the buffer.
+    void* data;
+    vkMapMemory(device, vertex_buffer_memory, 0, buffer_info.size, 0, &data);
+    memcpy(data, vertices.data(), (u64)buffer_info.size);
+    vkUnmapMemory(device, vertex_buffer_memory);
+}
+
 void vk::context::create_command_buffers() {
     command_buffers.resize(MAX_FRAMES_IN_FLIGHT);
 
@@ -707,6 +753,18 @@ void vk::context::draw_frame() {
     } else assert_success(res);
 
     current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+
+/// Find the GPU memory type that supports the required properties.
+u32 vk::context::find_memory_type(u32 type_filter, VkMemoryPropertyFlags properties) {
+    VkPhysicalDeviceMemoryProperties mem_properties;
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &mem_properties);
+
+    for (u32 i = 0; i < mem_properties.memoryTypeCount; i++)
+        if ((type_filter & (1 << i)) && (mem_properties.memoryTypes[i].propertyFlags & properties) == properties)
+            return i;
+
+    die("[Vulkan] Failed to find suitable memory type");
 }
 
 /// Find available queue families.
@@ -818,30 +876,33 @@ void vk::context::record_command_buffer(VkCommandBuffer nonnull command_buffer, 
     VkClearValue clear_colour = { { { 0.18f, 0.16f, 0.18f, 1.0f } } };
     render_pass_begin_info.clearValueCount = 1;
     render_pass_begin_info.pClearValues = &clear_colour;
+
     vkCmdBeginRenderPass(command_buffer, &render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+    {
+        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
 
-    /// Bind the graphics pipeline.
-    vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
+        VkViewport viewport{};
+        viewport.x = 0.0f;
+        viewport.y = 0.0f;
+        viewport.width = float(swap_chain_extent.width);
+        viewport.height = float(swap_chain_extent.height);
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
+        vkCmdSetViewport(command_buffer, 0, 1, &viewport);
 
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = float(swap_chain_extent.width);
-    viewport.height = float(swap_chain_extent.height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(command_buffer, 0, 1, &viewport);
+        VkRect2D scissor{};
+        scissor.offset = { 0, 0 };
+        scissor.extent = swap_chain_extent;
+        vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
-    VkRect2D scissor{};
-    scissor.offset = { 0, 0 };
-    scissor.extent = swap_chain_extent;
-    vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+        VkBuffer vertex_buffers[] = { vertex_buffer };
+        VkDeviceSize offsets[] = { 0 };
+        vkCmdBindVertexBuffers(command_buffer, 0, 1, vertex_buffers, offsets);
 
-    /// Draw the triangle.
-    vkCmdDraw(command_buffer, 3, 1, 0, 0);
-
-    /// End the render pass.
+        vkCmdDraw(command_buffer, u32(vertices.size()), 1, 0, 0);
+    }
     vkCmdEndRenderPass(command_buffer);
+
     assert_success(vkEndCommandBuffer(command_buffer), "failed to record command buffer");
 }
 

@@ -56,6 +56,10 @@ struct context {
     std::vector<VkFence nonnull> in_flight_fences;
     u32 current_frame = 0;
 
+    /// Buffers and memory.
+    VkBuffer nonnull vertex_buffer;
+    VkDeviceMemory nonnull vertex_buffer_memory;
+
     /// Window.
     GLFWwindow* nonnull window;
     bool resized = false;
@@ -92,6 +96,7 @@ struct context {
     void create_graphics_pipeline();
     void create_framebuffers();
     void create_command_pool();
+    void create_vertex_buffer();
     void create_command_buffers();
     void create_sync_objects();
 
@@ -99,6 +104,7 @@ struct context {
     void cleanup_swap_chain();
     auto create_shader_module(const std::vector<char>& code) -> VkShaderModule nonnull;
     void draw_frame();
+    u32 find_memory_type(u32 type_filter, VkMemoryPropertyFlags properties);
     auto find_queue_families(VkPhysicalDevice nonnull device) -> queue_family_indices;
     u64 phys_dev_score(VkPhysicalDevice nonnull dev);
     auto query_swap_chain_support(VkPhysicalDevice nonnull device) -> swap_chain_support_details;
