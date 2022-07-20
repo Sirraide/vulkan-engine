@@ -102,6 +102,9 @@ struct context {
 
     /// INTERNAL:
     void cleanup_swap_chain();
+    void copy_buffer(VkBuffer nonnull dest, VkBuffer nonnull src, VkDeviceSize size);
+    void create_buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
+        VkBuffer nonnull& buffer, VkDeviceMemory nonnull& buffer_memory);
     auto create_shader_module(const std::vector<char>& code) -> VkShaderModule nonnull;
     void draw_frame();
     u32 find_memory_type(u32 type_filter, VkMemoryPropertyFlags properties);
