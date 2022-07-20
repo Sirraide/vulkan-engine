@@ -58,7 +58,9 @@ struct context {
 
     /// Buffers and memory.
     VkBuffer nonnull vertex_buffer;
+    VkBuffer nonnull index_buffer;
     VkDeviceMemory nonnull vertex_buffer_memory;
+    VkDeviceMemory nonnull index_buffer_memory;
 
     /// Window.
     GLFWwindow* nonnull window;
@@ -97,6 +99,7 @@ struct context {
     void create_framebuffers();
     void create_command_pool();
     void create_vertex_buffer();
+    void create_index_buffer();
     void create_command_buffers();
     void create_sync_objects();
 

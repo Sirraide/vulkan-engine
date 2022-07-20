@@ -33,9 +33,14 @@ const std::vector<const char*> required_device_extensions = {
 };
 
 const std::vector<vertex> vertices = {
-    { { 0.0f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
-    { { 0.5f, 0.5f }, { 0.0f, 1.0f, 0.0f } },
-    { { -0.5f, 0.5f }, { 0.0f, 0.0f, 1.0f } }
+    { { -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
+    { { 0.5f, -0.5f }, { 0.0f, 1.0f, 0.0f } },
+    { { 0.5f, 0.5f }, { 0.0f, 0.0f, 1.0f } },
+    { { -0.5f, 0.5f }, { 1.0f, 1.0f, 1.0f } }
+};
+
+const std::vector<u32> indices = {
+    0, 1, 2, 2, 3, 0
 };
 
 /// Choose the best surface format.
@@ -146,7 +151,9 @@ vk::context::~context() {
     cleanup_swap_chain();
 
     vkDestroyBuffer(device, vertex_buffer, nullptr);
+    vkDestroyBuffer(device, index_buffer, nullptr);
     vkFreeMemory(device, vertex_buffer_memory, nullptr);
+    vkFreeMemory(device, index_buffer_memory, nullptr);
 
     vkDestroyPipeline(device, graphics_pipeline, nullptr);
     vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
@@ -290,6 +297,7 @@ vk::context::context(int wd, int ht, std::string_view title) {
     create_framebuffers();
     create_command_pool();
     create_vertex_buffer();
+    create_index_buffer();
     create_command_buffers();
     create_sync_objects();
 }
@@ -650,6 +658,34 @@ void vk::context::create_vertex_buffer() {
     vkFreeMemory(device, staging_buffer_memory, nullptr);
 }
 
+void vk::context::create_index_buffer() {
+    auto buffer_size = sizeof(indices[0]) * indices.size();
+
+    /// Create a staging buffer.
+    VkBuffer staging_buffer;
+    VkDeviceMemory staging_buffer_memory;
+    create_buffer(buffer_size,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        staging_buffer,
+        staging_buffer_memory);
+
+    /// Copy the data to the buffer.
+    void* data;
+    vkMapMemory(device, staging_buffer_memory, 0, buffer_size, 0, &data);
+    memcpy(data, indices.data(), (u64)buffer_size);
+    vkUnmapMemory(device, staging_buffer_memory);
+
+    /// Create the vertex buffer.
+    create_buffer(buffer_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, index_buffer, index_buffer_memory);
+
+    /// Copy the data to the buffer and delete the staging buffer.
+    copy_buffer(index_buffer, staging_buffer, buffer_size);
+    vkDestroyBuffer(device, staging_buffer, nullptr);
+    vkFreeMemory(device, staging_buffer_memory, nullptr);
+}
+
 void vk::context::create_command_buffers() {
     command_buffers.resize(MAX_FRAMES_IN_FLIGHT);
 
@@ -955,8 +991,9 @@ void vk::context::record_command_buffer(VkCommandBuffer nonnull command_buffer, 
         VkBuffer vertex_buffers[] = { vertex_buffer };
         VkDeviceSize offsets[] = { 0 };
         vkCmdBindVertexBuffers(command_buffer, 0, 1, vertex_buffers, offsets);
+        vkCmdBindIndexBuffer(command_buffer, index_buffer, 0, VK_INDEX_TYPE_UINT32);
 
-        vkCmdDraw(command_buffer, u32(vertices.size()), 1, 0, 0);
+        vkCmdDrawIndexed(command_buffer, static_cast<u32>(indices.size()), 1, 0, 0, 0);
     }
     vkCmdEndRenderPass(command_buffer);
 
