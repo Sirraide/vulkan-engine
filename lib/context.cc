@@ -11,6 +11,9 @@
 using namespace vk;
 defer_type_operator_lhs defer_type_operator_lhs::instance;
 
+/// ======================================================================
+///  Utilities
+/// ======================================================================
 namespace {
 /// How many contexts are currently alive.
 u64 context_count = 0;
@@ -127,6 +130,36 @@ void vulkan_fini() {
 
 } // namespace
 
+/// ======================================================================
+///  Context
+/// ======================================================================
+vk::context::~context() {
+    glfwDestroyWindow(window);
+
+    vkDestroySemaphore(device, render_finished_semaphore, nullptr);
+    vkDestroySemaphore(device, image_available_semaphore, nullptr);
+    vkDestroyFence(device, in_flight_fence, nullptr);
+    vkDestroyCommandPool(device, command_pool, nullptr);
+    for (auto* framebuffer : swap_chain_framebuffers) vkDestroyFramebuffer(device, framebuffer, nullptr);
+    vkDestroyPipeline(device, graphics_pipeline, nullptr);
+    vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+    vkDestroyRenderPass(device, render_pass, nullptr);
+    for (auto* image_view : swap_chain_image_views) vkDestroyImageView(device, image_view, nullptr);
+    vkDestroySwapchainKHR(device, swap_chain, nullptr);
+    vkDestroyDevice(device, nullptr);
+    vkDestroySurfaceKHR(instance, surface, nullptr);
+#ifdef ENABLE_VALIDATION_LAYERS
+    {
+        static auto func = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+        if (func != nullptr) func(instance, debug_messenger, nullptr);
+    }
+#endif
+    vkDestroyInstance(instance, nullptr);
+
+    context_count--;
+    if (context_count == 0) vulkan_fini();
+}
+
 vk::context::context(int wd, int ht, std::string_view title) : wd(wd), ht(ht) {
     if (context_count == 0) vulkan_init();
     context_count++;
@@ -221,7 +254,20 @@ vk::context::context(int wd, int ht, std::string_view title) : wd(wd), ht(ht) {
     /// Create the surface.
     assert_success(glfwCreateWindowSurface(instance, window, nullptr, &surface), "failed to create surface");
 
-    /// Determine the number of physical devices.
+    /// Initialise the rest.
+    pick_physical_device();
+    create_logical_device();
+    create_swap_chain();
+    create_image_views();
+    create_render_pass();
+    create_graphics_pipeline();
+    create_framebuffers();
+    create_command_pool();
+    create_command_buffer();
+    create_sync_objects();
+}
+
+void vk::context::pick_physical_device() {
     u32 device_count = 0;
     vkEnumeratePhysicalDevices(instance, &device_count, nullptr);
     if (device_count == 0) die("[Vulkan] No devices available");
@@ -235,8 +281,9 @@ vk::context::context(int wd, int ht, std::string_view title) : wd(wd), ht(ht) {
     for (auto& dev : devices) devices_by_score.insert({ phys_dev_score(dev), dev });
     if (devices_by_score.rbegin()->first == 0) die("[Vulkan] No suitable devices available");
     physical_device = devices_by_score.rbegin()->second;
+}
 
-    /// Specify the queue families for the logical device.
+void vk::context::create_logical_device() {
     auto indices = find_queue_families(physical_device);
     f32 queue_priority = 1.0f;
 
@@ -271,63 +318,6 @@ vk::context::context(int wd, int ht, std::string_view title) : wd(wd), ht(ht) {
     /// Get the queues.
     vkGetDeviceQueue(device, indices.graphics_family.value(), 0, &graphics_queue);
     vkGetDeviceQueue(device, indices.present_family.value(), 0, &present_queue);
-
-    /// Create the swap chain.
-    create_swap_chain();
-
-    /// Create the image views.
-    swap_chain_image_views.resize(swap_chain_images.size());
-    for (u64 i = 0; i < swap_chain_images.size(); i++) {
-        VkImageViewCreateInfo create_info_image_view{};
-        create_info_image_view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        create_info_image_view.image = swap_chain_images[i];
-        create_info_image_view.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        create_info_image_view.format = swap_chain_image_format;
-        create_info_image_view.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        create_info_image_view.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        create_info_image_view.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        create_info_image_view.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-        create_info_image_view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        create_info_image_view.subresourceRange.baseMipLevel = 0;
-        create_info_image_view.subresourceRange.levelCount = 1;
-        create_info_image_view.subresourceRange.baseArrayLayer = 0;
-        create_info_image_view.subresourceRange.layerCount = 1;
-        assert_success(vkCreateImageView(device, &create_info_image_view, nullptr, &swap_chain_image_views[i]), "failed to create image view");
-    }
-
-    create_render_pass();
-    create_graphics_pipeline();
-    create_framebuffers();
-    create_command_pool();
-    create_command_buffer();
-    create_sync_objects();
-}
-
-vk::context::~context() {
-    glfwDestroyWindow(window);
-
-    vkDestroySemaphore(device, render_finished_semaphore, nullptr);
-    vkDestroySemaphore(device, image_available_semaphore, nullptr);
-    vkDestroyFence(device, in_flight_fence, nullptr);
-    vkDestroyCommandPool(device, command_pool, nullptr);
-    for (auto* framebuffer : swap_chain_framebuffers) vkDestroyFramebuffer(device, framebuffer, nullptr);
-    vkDestroyPipeline(device, graphics_pipeline, nullptr);
-    vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
-    vkDestroyRenderPass(device, render_pass, nullptr);
-    for (auto* image_view : swap_chain_image_views) vkDestroyImageView(device, image_view, nullptr);
-    vkDestroySwapchainKHR(device, swap_chain, nullptr);
-    vkDestroyDevice(device, nullptr);
-    vkDestroySurfaceKHR(instance, surface, nullptr);
-#ifdef ENABLE_VALIDATION_LAYERS
-    {
-        static auto func = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
-        if (func != nullptr) func(instance, debug_messenger, nullptr);
-    }
-#endif
-    vkDestroyInstance(instance, nullptr);
-
-    context_count--;
-    if (context_count == 0) vulkan_fini();
 }
 
 void vk::context::create_swap_chain() {
@@ -387,6 +377,27 @@ void vk::context::create_swap_chain() {
     /// Store these for later.
     swap_chain_extent = extent;
     swap_chain_image_format = surface_format.format;
+}
+
+void vk::context::create_image_views() {
+    swap_chain_image_views.resize(swap_chain_images.size());
+    for (u64 i = 0; i < swap_chain_images.size(); i++) {
+        VkImageViewCreateInfo create_info_image_view{};
+        create_info_image_view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        create_info_image_view.image = swap_chain_images[i];
+        create_info_image_view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        create_info_image_view.format = swap_chain_image_format;
+        create_info_image_view.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        create_info_image_view.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        create_info_image_view.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        create_info_image_view.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        create_info_image_view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        create_info_image_view.subresourceRange.baseMipLevel = 0;
+        create_info_image_view.subresourceRange.levelCount = 1;
+        create_info_image_view.subresourceRange.baseArrayLayer = 0;
+        create_info_image_view.subresourceRange.layerCount = 1;
+        assert_success(vkCreateImageView(device, &create_info_image_view, nullptr, &swap_chain_image_views[i]), "failed to create image view");
+    }
 }
 
 void vk::context::create_render_pass() {
@@ -789,10 +800,9 @@ void vk::context::record_command_buffer(VkCommandBuffer nonnull command_buffer, 
     assert_success(vkEndCommandBuffer(command_buffer), "failed to record command buffer");
 }
 
-///
-/// API
-///
-
+/// ======================================================================
+///  API
+/// ======================================================================
 void vk::context::poll() {
     glfwPollEvents();
 }

@@ -84,8 +84,11 @@ struct context {
     /// Whether the main loop should terminate.
     bool should_terminate();
 
-    /// INTERNAL:
+    /// INTERNAL (Setup):
+    void pick_physical_device();
+    void create_logical_device();
     void create_swap_chain();
+    void create_image_views();
     void create_render_pass();
     void create_graphics_pipeline();
     void create_framebuffers();
@@ -93,6 +96,7 @@ struct context {
     void create_command_buffer();
     void create_sync_objects();
 
+    /// INTERNAL:
     auto create_shader_module(const std::vector<char>& code) -> VkShaderModule nonnull;
     void draw_frame();
     auto find_queue_families(VkPhysicalDevice nonnull device) -> queue_family_indices;
