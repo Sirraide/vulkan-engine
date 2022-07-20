@@ -37,6 +37,8 @@
 #    define ENABLE_VALIDATION_LAYERS
 #endif
 
+#define defer auto CAT($$defer_struct_instance_, __COUNTER__) = defer_type_operator_lhs::instance % [&]
+
 typedef int8_t i8;
 typedef int16_t i16;
 typedef int32_t i32;
@@ -50,6 +52,7 @@ typedef double f64;
 
 template <typename... args_t>
 [[noreturn]] inline void die(fmt::format_string<args_t...> fmt_str, args_t&&... args) {
+    fmt::print(stderr, "\033[31m[Fatal] ");
     fmt::print(stderr, fmt_str, std::forward<args_t>(args)...);
     fmt::print(stderr, "\n");
     std::exit(1);
@@ -59,8 +62,28 @@ template <typename... args_t>
 inline void assert_success(VkResult res, fmt::format_string<args_t...> fmt_str = "", args_t&&... args) {
     if (res != VK_SUCCESS) {
         fmt::print(stderr, "[Vulkan] ");
-        die(fmt_str, std::forward<args_t>(args)...);
+        fmt::print(stderr, fmt_str, std::forward<args_t>(args)...);
+        fmt::print(stderr, "\n");
+        std::exit(1);
     }
 }
+
+template <typename callable_t>
+struct defer_type {
+    using callable_type = callable_t;
+    const callable_type function;
+    explicit defer_type(callable_t _function) : function(_function) {}
+    inline ~defer_type() { function(); }
+    defer_type(const defer_type&)            = delete;
+    defer_type(defer_type&&)                 = delete;
+    defer_type& operator=(const defer_type&) = delete;
+    defer_type& operator=(defer_type&&)      = delete;
+};
+
+struct defer_type_operator_lhs {
+    static defer_type_operator_lhs instance;
+    template <typename callable_t>
+    auto operator%(callable_t rhs) -> defer_type<callable_t> { return defer_type<callable_t>(rhs); }
+};
 
 #endif // VULKAN_TEMPLATE_UTILS_HH

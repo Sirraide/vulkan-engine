@@ -1,10 +1,15 @@
 #include "context.hh"
 
 #include <algorithm>
+#include <fcntl.h>
 #include <map>
 #include <set>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 using namespace vk;
+defer_type_operator_lhs defer_type_operator_lhs::instance;
 
 namespace {
 /// How many contexts are currently alive.
@@ -56,6 +61,30 @@ VkExtent2D choose_swap_extent(const VkSurfaceCapabilitiesKHR& capabilities, GLFW
     actual_extent.height = std::clamp(actual_extent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
 
     return actual_extent;
+}
+
+inline std::vector<char> map_file(const char* filename) {
+    int fd = ::open(filename, O_RDONLY);
+    if (fd < 0) [[unlikely]]
+        die("open(\"{}\") failed: {}", filename, ::strerror(errno));
+
+    struct stat s {};
+    if (::fstat(fd, &s)) [[unlikely]]
+        die("fstat(\"{}\") failed: {}", filename, ::strerror(errno));
+    auto sz = size_t(s.st_size);
+    if (sz == 0) [[unlikely]]
+        return {};
+
+    auto* mem = (char*) ::mmap(nullptr, sz, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+    if (mem == MAP_FAILED) [[unlikely]]
+        die("mmap(\"{}\", {}) failed: {}", filename, sz, ::strerror(errno));
+    ::close(fd);
+
+    std::vector<char> bytes(sz);
+    std::memcpy(bytes.data(), mem, sz);
+    if (::munmap(mem, sz)) [[unlikely]]
+        die("munmap(\"{}\", {}) failed: {}", filename, sz, ::strerror(errno));
+    return bytes;
 }
 
 /// Handle Vulkan errors.
@@ -243,6 +272,62 @@ vk::context::context(int wd, int ht, std::string_view title) : wd(wd), ht(ht) {
     vkGetDeviceQueue(device, indices.graphics_family.value(), 0, &graphics_queue);
     vkGetDeviceQueue(device, indices.present_family.value(), 0, &present_queue);
 
+    /// Create the swap chain.
+    create_swap_chain();
+
+    /// Create the image views.
+    swap_chain_image_views.resize(swap_chain_images.size());
+    for (u64 i = 0; i < swap_chain_images.size(); i++) {
+        VkImageViewCreateInfo create_info_image_view{};
+        create_info_image_view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        create_info_image_view.image = swap_chain_images[i];
+        create_info_image_view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        create_info_image_view.format = swap_chain_image_format;
+        create_info_image_view.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        create_info_image_view.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        create_info_image_view.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        create_info_image_view.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        create_info_image_view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        create_info_image_view.subresourceRange.baseMipLevel = 0;
+        create_info_image_view.subresourceRange.levelCount = 1;
+        create_info_image_view.subresourceRange.baseArrayLayer = 0;
+        create_info_image_view.subresourceRange.layerCount = 1;
+        assert_success(vkCreateImageView(device, &create_info_image_view, nullptr, &swap_chain_image_views[i]), "failed to create image view");
+    }
+
+    /// Create the render pass.
+    create_render_pass();
+
+    /// Create the graphics pipeline.
+    create_graphics_pipeline();
+
+    /// Create the framebuffers.
+    create_framebuffers();
+}
+
+vk::context::~context() {
+    glfwDestroyWindow(window);
+
+#ifdef ENABLE_VALIDATION_LAYERS
+    {
+        static auto func = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+        if (func != nullptr) func(instance, debug_messenger, nullptr);
+    }
+#endif
+    vkDestroyPipeline(device, graphics_pipeline, nullptr);
+    vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+    vkDestroyRenderPass(device, render_pass, nullptr);
+    for (auto image_view : swap_chain_image_views) vkDestroyImageView(device, image_view, nullptr);
+    vkDestroySwapchainKHR(device, swap_chain, nullptr);
+    vkDestroyDevice(device, nullptr);
+    vkDestroySurfaceKHR(instance, surface, nullptr);
+    vkDestroyInstance(instance, nullptr);
+
+    context_count--;
+    if (context_count == 0) vulkan_fini();
+}
+
+void vk::context::create_swap_chain() {
     /// Determine the information required for the swap chain.
     auto swap_chain_support = query_swap_chain_support(physical_device);
     VkSurfaceFormatKHR surface_format = choose_swap_surface_format(swap_chain_support.formats);
@@ -267,6 +352,7 @@ vk::context::context(int wd, int ht, std::string_view title) : wd(wd), ht(ht) {
     create_info_swap_chain.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
     /// If the graphics and present queues are different, we need to specify the sharing mode.
+    auto indices = find_queue_families(physical_device);
     u32 queue_families[] = { indices.graphics_family.value(), indices.present_family.value() };
     if (indices.graphics_family != indices.present_family) {
         create_info_swap_chain.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
@@ -289,24 +375,180 @@ vk::context::context(int wd, int ht, std::string_view title) : wd(wd), ht(ht) {
 
     /// Finally, create the swap chain.
     assert_success(vkCreateSwapchainKHR(device, &create_info_swap_chain, nullptr, &swap_chain), "failed to create swap chain");
+
+    /// Get the swap chain images.
+    vkGetSwapchainImagesKHR(device, swap_chain, &image_count, nullptr);
+    swap_chain_images.resize(image_count);
+    vkGetSwapchainImagesKHR(device, swap_chain, &image_count, swap_chain_images.data());
+
+    /// Store these for later.
+    swap_chain_extent = extent;
+    swap_chain_image_format = surface_format.format;
 }
 
-vk::context::~context() {
-    glfwDestroyWindow(window);
+void vk::context::create_render_pass() {
+    /// Attachment descriptions.
+    VkAttachmentDescription colour_attachment{};
+    colour_attachment.format = swap_chain_image_format;
+    colour_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    colour_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colour_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colour_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colour_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    colour_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    colour_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-#ifdef ENABLE_VALIDATION_LAYERS
-    {
-        static auto func = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
-        if (func != nullptr) func(instance, debug_messenger, nullptr);
-    }
-#endif
-    vkDestroySwapchainKHR(device, swap_chain, nullptr);
-    vkDestroyDevice(device, nullptr);
-    vkDestroySurfaceKHR(instance, surface, nullptr);
-    vkDestroyInstance(instance, nullptr);
+    /// Subpasses and attachment references.
+    VkAttachmentReference color_attachment_ref{};
+    color_attachment_ref.attachment = 0;
+    color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-    context_count--;
-    if (context_count == 0) vulkan_fini();
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &color_attachment_ref;
+
+    /// Render pass.
+    VkRenderPassCreateInfo create_info_render_pass{};
+    create_info_render_pass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    create_info_render_pass.attachmentCount = 1;
+    create_info_render_pass.pAttachments = &colour_attachment;
+    create_info_render_pass.subpassCount = 1;
+    create_info_render_pass.pSubpasses = &subpass;
+    assert_success(vkCreateRenderPass(device, &create_info_render_pass, nullptr, &render_pass), "failed to create render pass");
+}
+
+void vk::context::create_graphics_pipeline() {
+    /// Create the shader modules.
+    auto vert_shader_module = create_shader_module(map_file("out/vert.spv"));
+    auto frag_shader_module = create_shader_module(map_file("out/frag.spv"));
+    defer {
+        vkDestroyShaderModule(device, vert_shader_module, nullptr);
+        vkDestroyShaderModule(device, frag_shader_module, nullptr);
+    };
+
+    /// Assign the shaders to their corresponding stages.
+    VkPipelineShaderStageCreateInfo vert_shader_stage_info{};
+    vert_shader_stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vert_shader_stage_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vert_shader_stage_info.module = vert_shader_module;
+    vert_shader_stage_info.pName = "main";
+
+    VkPipelineShaderStageCreateInfo frag_shader_stage_info{};
+    frag_shader_stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    frag_shader_stage_info.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    frag_shader_stage_info.module = frag_shader_module;
+    frag_shader_stage_info.pName = "main";
+
+    /// Store them for later.
+    VkPipelineShaderStageCreateInfo shader_stages[] = { vert_shader_stage_info, frag_shader_stage_info };
+
+    /// Dynamic state.
+    std::vector<VkDynamicState> dynamic_states = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynamic_state_info{};
+    dynamic_state_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamic_state_info.dynamicStateCount = u32(dynamic_states.size());
+    dynamic_state_info.pDynamicStates = dynamic_states.data();
+
+    /// Vertex input.
+    VkPipelineVertexInputStateCreateInfo vertex_input_info{};
+    vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+    /// Input assembly.
+    VkPipelineInputAssemblyStateCreateInfo input_assembly_info{};
+    input_assembly_info.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    input_assembly_info.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    input_assembly_info.primitiveRestartEnable = VK_FALSE;
+
+    /// Viewport and scissor.
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = f32(swap_chain_extent.width);
+    viewport.height = f32(swap_chain_extent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    VkRect2D scissor{};
+    scissor.offset = { 0, 0 };
+    scissor.extent = swap_chain_extent;
+
+    VkPipelineViewportStateCreateInfo viewport_state_info{};
+    viewport_state_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport_state_info.viewportCount = 1;
+    viewport_state_info.scissorCount = 1;
+
+    /// Rasteriser.
+    VkPipelineRasterizationStateCreateInfo rasteriser_info{};
+    rasteriser_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasteriser_info.depthClampEnable = VK_FALSE;
+    rasteriser_info.rasterizerDiscardEnable = VK_FALSE;
+    rasteriser_info.polygonMode = VK_POLYGON_MODE_FILL;
+    rasteriser_info.lineWidth = 1.0f;
+    rasteriser_info.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasteriser_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasteriser_info.depthBiasEnable = VK_FALSE;
+
+    /// Multisampling.
+    VkPipelineMultisampleStateCreateInfo multisampling_info{};
+    multisampling_info.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling_info.sampleShadingEnable = VK_FALSE;
+    multisampling_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    multisampling_info.minSampleShading = 1.0f;
+
+    /// Colour blending.
+    VkPipelineColorBlendAttachmentState colour_blend_attachment{};
+    colour_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                                             | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colour_blend_attachment.blendEnable = VK_FALSE;
+
+    VkPipelineColorBlendStateCreateInfo colour_blend_info{};
+    colour_blend_info.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colour_blend_info.logicOpEnable = VK_FALSE;
+    colour_blend_info.logicOp = VK_LOGIC_OP_COPY;
+    colour_blend_info.attachmentCount = 1;
+    colour_blend_info.pAttachments = &colour_blend_attachment;
+
+    /// Pipeline layout.
+    VkPipelineLayoutCreateInfo pipeline_layout_info{};
+    pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    assert_success(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout), "failed to create pipeline layout");
+
+    /// Finally, create the pipeline.
+    VkGraphicsPipelineCreateInfo pipeline_info{};
+    pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipeline_info.stageCount = u32(sizeof shader_stages / sizeof *shader_stages);
+    pipeline_info.pStages = shader_stages;
+    pipeline_info.pVertexInputState = &vertex_input_info;
+    pipeline_info.pInputAssemblyState = &input_assembly_info;
+    pipeline_info.pViewportState = &viewport_state_info;
+    pipeline_info.pRasterizationState = &rasteriser_info;
+    pipeline_info.pMultisampleState = &multisampling_info;
+    pipeline_info.pDepthStencilState = nullptr;
+    pipeline_info.pColorBlendState = &colour_blend_info;
+    pipeline_info.pDynamicState = &dynamic_state_info;
+    pipeline_info.layout = pipeline_layout;
+    pipeline_info.renderPass = render_pass;
+    pipeline_info.subpass = 0;
+    pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
+    pipeline_info.basePipelineIndex = -1;
+    assert_success(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &graphics_pipeline),
+        "failed to create graphics pipeline");
+}
+
+auto vk::context::create_framebuffers() {
+
+}
+
+auto vk::context::create_shader_module(const std::vector<char>& code) -> VkShaderModule nonnull {
+    VkShaderModuleCreateInfo create_info{};
+    create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    create_info.codeSize = code.size();
+    create_info.pCode = reinterpret_cast<const u32*>(code.data());
+
+    VkShaderModule shader_module;
+    assert_success(vkCreateShaderModule(device, &create_info, nullptr, &shader_module), "failed to create shader module");
+    return shader_module;
 }
 
 /// Find available queue families.

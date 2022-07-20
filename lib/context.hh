@@ -27,16 +27,27 @@ struct swap_chain_support_details {
 
 /// The Vulkan context.
 struct context {
-    /// Whether this context should stop running.
+    /// Device handles etc.
     VkDevice nonnull device;
     VkInstance nonnull instance;
     VkPhysicalDevice nonnull physical_device;
+    VkPipeline nonnull graphics_pipeline;
+    VkPipelineLayout nonnull pipeline_layout;
+    VkRenderPass nonnull render_pass;
     VkSurfaceKHR nonnull surface;
-    VkSwapchainKHR nonnull swap_chain;
 
+    /// Queues.
     VkQueue nonnull graphics_queue;
     VkQueue nonnull present_queue;
 
+    /// Swap chain.
+    VkSwapchainKHR nonnull swap_chain;
+    VkFormat swap_chain_image_format;
+    VkExtent2D swap_chain_extent;
+    std::vector<VkImage nonnull> swap_chain_images;
+    std::vector<VkImageView nonnull> swap_chain_image_views;
+
+    /// Window.
     GLFWwindow* nonnull window;
     int wd;
     int ht;
@@ -55,6 +66,7 @@ struct context {
     nocopy(context);
     nomove(context);
 
+
     /// Poll window events.
     void poll();
 
@@ -65,6 +77,10 @@ struct context {
     bool should_terminate();
 
     /// INTERNAL:
+    void create_render_pass();
+    void create_graphics_pipeline();
+    auto create_shader_module(const std::vector<char>& code) -> VkShaderModule nonnull;
+    void create_swap_chain();
     auto find_queue_families(VkPhysicalDevice nonnull device) -> queue_family_indices;
     u64 phys_dev_score(VkPhysicalDevice nonnull dev);
     auto query_swap_chain_support(VkPhysicalDevice nonnull device) -> swap_chain_support_details;
