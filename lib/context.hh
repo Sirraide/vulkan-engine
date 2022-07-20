@@ -28,7 +28,6 @@ struct swap_chain_support_details {
 /// The Vulkan context.
 struct context {
     /// Device handles etc.
-    VkCommandBuffer nonnull command_buffer;
     VkCommandPool nonnull command_pool;
     VkDevice nonnull device;
     VkInstance nonnull instance;
@@ -50,15 +49,16 @@ struct context {
     std::vector<VkImageView nonnull> swap_chain_image_views;
     std::vector<VkFramebuffer nonnull> swap_chain_framebuffers;
 
-    /// Synchronisation.
-    VkSemaphore nonnull image_available_semaphore;
-    VkSemaphore nonnull render_finished_semaphore;
-    VkFence nonnull in_flight_fence;
+    /// Frames.
+    std::vector<VkCommandBuffer nonnull> command_buffers;
+    std::vector<VkSemaphore nonnull> image_available_semaphores;
+    std::vector<VkSemaphore nonnull> render_finished_semaphores;
+    std::vector<VkFence nonnull> in_flight_fences;
+    u32 current_frame = 0;
 
     /// Window.
     GLFWwindow* nonnull window;
-    int wd;
-    int ht;
+    bool resized = false;
 
 #ifdef ENABLE_VALIDATION_LAYERS
     VkDebugUtilsMessengerEXT nonnull debug_messenger;
@@ -73,7 +73,6 @@ struct context {
     /// We don't want to copy or move contexts.
     nocopy(context);
     nomove(context);
-
 
     /// Poll window events.
     void poll();
@@ -93,16 +92,18 @@ struct context {
     void create_graphics_pipeline();
     void create_framebuffers();
     void create_command_pool();
-    void create_command_buffer();
+    void create_command_buffers();
     void create_sync_objects();
 
     /// INTERNAL:
+    void cleanup_swap_chain();
     auto create_shader_module(const std::vector<char>& code) -> VkShaderModule nonnull;
     void draw_frame();
     auto find_queue_families(VkPhysicalDevice nonnull device) -> queue_family_indices;
     u64 phys_dev_score(VkPhysicalDevice nonnull dev);
     auto query_swap_chain_support(VkPhysicalDevice nonnull device) -> swap_chain_support_details;
     void record_command_buffer(VkCommandBuffer nonnull command_buffer, u32 img_index);
+    void recreate_swap_chain();
 };
 
 } // namespace vk

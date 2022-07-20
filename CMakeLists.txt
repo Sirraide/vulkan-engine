@@ -19,7 +19,7 @@ target_compile_options(options INTERFACE
         -Werror=nonnull -Werror=nullability
         -Werror=nullable-to-nonnull-conversion -Wnullability-completeness)
 if (CMAKE_BUILD_TYPE STREQUAL Release)
-    target_compile_options(options INTERFACE -O3)
+    target_compile_options(options INTERFACE -O3 -DNDEBUG)
 else ()
     target_compile_options(options INTERFACE -O0 -ggdb)
 endif ()

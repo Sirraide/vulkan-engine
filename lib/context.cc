@@ -8,6 +8,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#define MAX_FRAMES_IN_FLIGHT 2
+
 using namespace vk;
 defer_type_operator_lhs defer_type_operator_lhs::instance;
 
@@ -120,7 +122,6 @@ void vulkan_init() {
     /// Initialise GLFW.
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 }
 
 /// Cleanup Vulkan.
@@ -134,33 +135,40 @@ void vulkan_fini() {
 ///  Context
 /// ======================================================================
 vk::context::~context() {
-    glfwDestroyWindow(window);
+    cleanup_swap_chain();
 
-    vkDestroySemaphore(device, render_finished_semaphore, nullptr);
-    vkDestroySemaphore(device, image_available_semaphore, nullptr);
-    vkDestroyFence(device, in_flight_fence, nullptr);
-    vkDestroyCommandPool(device, command_pool, nullptr);
-    for (auto* framebuffer : swap_chain_framebuffers) vkDestroyFramebuffer(device, framebuffer, nullptr);
     vkDestroyPipeline(device, graphics_pipeline, nullptr);
     vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+
     vkDestroyRenderPass(device, render_pass, nullptr);
-    for (auto* image_view : swap_chain_image_views) vkDestroyImageView(device, image_view, nullptr);
-    vkDestroySwapchainKHR(device, swap_chain, nullptr);
+
+    for (u64 i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vkDestroySemaphore(device, render_finished_semaphores[i], nullptr);
+        vkDestroySemaphore(device, image_available_semaphores[i], nullptr);
+        vkDestroyFence(device, in_flight_fences[i], nullptr);
+    }
+
+    vkDestroyCommandPool(device, command_pool, nullptr);
+
     vkDestroyDevice(device, nullptr);
-    vkDestroySurfaceKHR(instance, surface, nullptr);
+
 #ifdef ENABLE_VALIDATION_LAYERS
     {
         static auto func = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
         if (func != nullptr) func(instance, debug_messenger, nullptr);
     }
 #endif
+
+    vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyInstance(instance, nullptr);
+
+    glfwDestroyWindow(window);
 
     context_count--;
     if (context_count == 0) vulkan_fini();
 }
 
-vk::context::context(int wd, int ht, std::string_view title) : wd(wd), ht(ht) {
+vk::context::context(int wd, int ht, std::string_view title) {
     if (context_count == 0) vulkan_init();
     context_count++;
 
@@ -171,6 +179,13 @@ vk::context::context(int wd, int ht, std::string_view title) : wd(wd), ht(ht) {
         glfwGetError(&err);
         die("[GLFW] Error: Could not create window: {}", err);
     }
+
+    /// Tell GLFW to notify us when the window is resized.
+    glfwSetWindowUserPointer(window, this);
+    glfwSetFramebufferSizeCallback(window, [](GLFWwindow* w, int, int) {
+        auto* ctx = (vk::context*) glfwGetWindowUserPointer(w);
+        ctx->resized = true;
+    });
 
     /// Make sure all required layers are available.
 #ifdef ENABLE_VALIDATION_LAYERS
@@ -263,7 +278,7 @@ vk::context::context(int wd, int ht, std::string_view title) : wd(wd), ht(ht) {
     create_graphics_pipeline();
     create_framebuffers();
     create_command_pool();
-    create_command_buffer();
+    create_command_buffers();
     create_sync_objects();
 }
 
@@ -588,16 +603,22 @@ void vk::context::create_command_pool() {
     assert_success(vkCreateCommandPool(device, &pool_info, nullptr, &command_pool), "failed to create command pool");
 }
 
-void vk::context::create_command_buffer() {
+void vk::context::create_command_buffers() {
+    command_buffers.resize(MAX_FRAMES_IN_FLIGHT);
+
     VkCommandBufferAllocateInfo alloc_info{};
     alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     alloc_info.commandPool = command_pool;
     alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    alloc_info.commandBufferCount = 1;
-    assert_success(vkAllocateCommandBuffers(device, &alloc_info, &command_buffer), "failed to allocate command buffer");
+    alloc_info.commandBufferCount = u32(command_buffers.size());
+    assert_success(vkAllocateCommandBuffers(device, &alloc_info, command_buffers.data()), "failed to allocate command buffers");
 }
 
 void vk::context::create_sync_objects() {
+    image_available_semaphores.resize(MAX_FRAMES_IN_FLIGHT);
+    render_finished_semaphores.resize(MAX_FRAMES_IN_FLIGHT);
+    in_flight_fences.resize(MAX_FRAMES_IN_FLIGHT);
+
     VkSemaphoreCreateInfo semaphore_info{};
     semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
@@ -605,9 +626,17 @@ void vk::context::create_sync_objects() {
     fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT; /// We want to start with a fence in the signaled state.
 
-    assert_success(vkCreateSemaphore(device, &semaphore_info, nullptr, &image_available_semaphore), "failed to create semaphore");
-    assert_success(vkCreateSemaphore(device, &semaphore_info, nullptr, &render_finished_semaphore), "failed to create semaphore");
-    assert_success(vkCreateFence(device, &fence_info, nullptr, &in_flight_fence), "failed to create fence");
+    for (u64 i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        assert_success(vkCreateSemaphore(device, &semaphore_info, nullptr, &image_available_semaphores[i]), "failed to create semaphore");
+        assert_success(vkCreateSemaphore(device, &semaphore_info, nullptr, &render_finished_semaphores[i]), "failed to create semaphore");
+        assert_success(vkCreateFence(device, &fence_info, nullptr, &in_flight_fences[i]), "failed to create fence");
+    }
+}
+
+void vk::context::cleanup_swap_chain() {
+    for (auto* framebuffer : swap_chain_framebuffers) vkDestroyFramebuffer(device, framebuffer, nullptr);
+    for (auto* image_view : swap_chain_image_views) vkDestroyImageView(device, image_view, nullptr);
+    vkDestroySwapchainKHR(device, swap_chain, nullptr);
 }
 
 auto vk::context::create_shader_module(const std::vector<char>& code) -> VkShaderModule nonnull {
@@ -623,20 +652,28 @@ auto vk::context::create_shader_module(const std::vector<char>& code) -> VkShade
 
 void vk::context::draw_frame() {
     /// Wait for the previous frame to finish.
-    vkWaitForFences(device, 1, &in_flight_fence, VK_TRUE, UINT64_MAX);
-    vkResetFences(device, 1, &in_flight_fence);
+    vkWaitForFences(device, 1, &in_flight_fences[current_frame], VK_TRUE, UINT64_MAX);
 
     /// Acquire an image from the swap chain.
     u32 image_index;
-    vkAcquireNextImageKHR(device, swap_chain, UINT64_MAX, image_available_semaphore, VK_NULL_HANDLE, &image_index);
+    auto res = vkAcquireNextImageKHR(device, swap_chain, UINT64_MAX, image_available_semaphores[current_frame], VK_NULL_HANDLE, &image_index);
+
+    /// If the swap chain is out of date, recreate it.
+    if (res == VK_ERROR_OUT_OF_DATE_KHR) {
+        recreate_swap_chain();
+        return;
+    } else if (res != VK_SUBOPTIMAL_KHR) assert_success(res);
+
+    /// Reset the fence if we are submitting work.
+    vkResetFences(device, 1, &in_flight_fences[current_frame]);
 
     /// Record the command buffer.
-    vkResetCommandBuffer(command_buffer, 0);
-    record_command_buffer(command_buffer, image_index);
+    vkResetCommandBuffer(command_buffers[current_frame], 0);
+    record_command_buffer(command_buffers[current_frame], image_index);
 
     /// Submit the command buffer.
-    VkSemaphore wait_semaphores[] = { image_available_semaphore };
-    VkSemaphore signal_semaphores[] = { render_finished_semaphore };
+    VkSemaphore wait_semaphores[] = { image_available_semaphores[current_frame] };
+    VkSemaphore signal_semaphores[] = { render_finished_semaphores[current_frame] };
     VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
 
     VkSubmitInfo submit_info{};
@@ -645,10 +682,10 @@ void vk::context::draw_frame() {
     submit_info.pWaitSemaphores = wait_semaphores;
     submit_info.pWaitDstStageMask = wait_stages;
     submit_info.commandBufferCount = 1;
-    submit_info.pCommandBuffers = &command_buffer;
+    submit_info.pCommandBuffers = &command_buffers[current_frame];
     submit_info.signalSemaphoreCount = 1;
     submit_info.pSignalSemaphores = signal_semaphores;
-    assert_success(vkQueueSubmit(graphics_queue, 1, &submit_info, in_flight_fence), "failed to submit command buffer");
+    assert_success(vkQueueSubmit(graphics_queue, 1, &submit_info, in_flight_fences[current_frame]), "failed to submit command buffer");
 
     /// Present the image to the swap chain.
     VkPresentInfoKHR present_info{};
@@ -661,7 +698,15 @@ void vk::context::draw_frame() {
     present_info.pSwapchains = swap_chains;
     present_info.pImageIndices = &image_index;
 
-    vkQueuePresentKHR(present_queue, &present_info);
+    res = vkQueuePresentKHR(present_queue, &present_info);
+
+    /// If the swap chain is out of date, recreate it.
+    if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR || resized) {
+        resized = false;
+        recreate_swap_chain();
+    } else assert_success(res);
+
+    current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
 /// Find available queue families.
@@ -798,6 +843,23 @@ void vk::context::record_command_buffer(VkCommandBuffer nonnull command_buffer, 
     /// End the render pass.
     vkCmdEndRenderPass(command_buffer);
     assert_success(vkEndCommandBuffer(command_buffer), "failed to record command buffer");
+}
+
+void vk::context::recreate_swap_chain() {
+    /// If the window has been minimised, pause rendering.
+    int wd, ht;
+    glfwGetWindowSize(window, &wd, &ht);
+    while (wd == 0 || ht == 0) {
+        glfwGetWindowSize(window, &wd, &ht);
+        glfwWaitEvents();
+    }
+
+    vkDeviceWaitIdle(device);
+    cleanup_swap_chain();
+
+    create_swap_chain();
+    create_image_views();
+    create_framebuffers();
 }
 
 /// ======================================================================
