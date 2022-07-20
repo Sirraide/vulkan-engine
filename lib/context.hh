@@ -50,6 +50,11 @@ struct context {
     std::vector<VkImageView nonnull> swap_chain_image_views;
     std::vector<VkFramebuffer nonnull> swap_chain_framebuffers;
 
+    /// Synchronisation.
+    VkSemaphore nonnull image_available_semaphore;
+    VkSemaphore nonnull render_finished_semaphore;
+    VkFence nonnull in_flight_fence;
+
     /// Window.
     GLFWwindow* nonnull window;
     int wd;
@@ -74,7 +79,7 @@ struct context {
     void poll();
 
     /// Run the context forever.
-    void run_forever(std::function<void()> tick = {});
+    void run_forever();
 
     /// Whether the main loop should terminate.
     bool should_terminate();
@@ -86,12 +91,14 @@ struct context {
     void create_framebuffers();
     void create_command_pool();
     void create_command_buffer();
-    void record_command_buffer(VkCommandBuffer nonnull command_buffer, u32 img_index);
+    void create_sync_objects();
 
     auto create_shader_module(const std::vector<char>& code) -> VkShaderModule nonnull;
+    void draw_frame();
     auto find_queue_families(VkPhysicalDevice nonnull device) -> queue_family_indices;
     u64 phys_dev_score(VkPhysicalDevice nonnull dev);
     auto query_swap_chain_support(VkPhysicalDevice nonnull device) -> swap_chain_support_details;
+    void record_command_buffer(VkCommandBuffer nonnull command_buffer, u32 img_index);
 };
 
 } // namespace vk

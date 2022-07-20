@@ -299,18 +299,16 @@ vk::context::context(int wd, int ht, std::string_view title) : wd(wd), ht(ht) {
     create_graphics_pipeline();
     create_framebuffers();
     create_command_pool();
-    create_command_buffers();
+    create_command_buffer();
+    create_sync_objects();
 }
 
 vk::context::~context() {
     glfwDestroyWindow(window);
 
-#ifdef ENABLE_VALIDATION_LAYERS
-    {
-        static auto func = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
-        if (func != nullptr) func(instance, debug_messenger, nullptr);
-    }
-#endif
+    vkDestroySemaphore(device, render_finished_semaphore, nullptr);
+    vkDestroySemaphore(device, image_available_semaphore, nullptr);
+    vkDestroyFence(device, in_flight_fence, nullptr);
     vkDestroyCommandPool(device, command_pool, nullptr);
     for (auto* framebuffer : swap_chain_framebuffers) vkDestroyFramebuffer(device, framebuffer, nullptr);
     vkDestroyPipeline(device, graphics_pipeline, nullptr);
@@ -320,6 +318,12 @@ vk::context::~context() {
     vkDestroySwapchainKHR(device, swap_chain, nullptr);
     vkDestroyDevice(device, nullptr);
     vkDestroySurfaceKHR(instance, surface, nullptr);
+#ifdef ENABLE_VALIDATION_LAYERS
+    {
+        static auto func = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+        if (func != nullptr) func(instance, debug_messenger, nullptr);
+    }
+#endif
     vkDestroyInstance(instance, nullptr);
 
     context_count--;
@@ -407,6 +411,15 @@ void vk::context::create_render_pass() {
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &color_attachment_ref;
 
+    /// Subpass dependencies.
+    VkSubpassDependency dependency{};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcAccessMask = 0;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
     /// Render pass.
     VkRenderPassCreateInfo create_info_render_pass{};
     create_info_render_pass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -414,6 +427,8 @@ void vk::context::create_render_pass() {
     create_info_render_pass.pAttachments = &colour_attachment;
     create_info_render_pass.subpassCount = 1;
     create_info_render_pass.pSubpasses = &subpass;
+    create_info_render_pass.dependencyCount = 1;
+    create_info_render_pass.pDependencies = &dependency;
     assert_success(vkCreateRenderPass(device, &create_info_render_pass, nullptr, &render_pass), "failed to create render pass");
 }
 
@@ -571,50 +586,18 @@ void vk::context::create_command_buffer() {
     assert_success(vkAllocateCommandBuffers(device, &alloc_info, &command_buffer), "failed to allocate command buffer");
 }
 
-void vk::context::record_command_buffer(VkCommandBuffer nonnull command_buffer, u32 img_index) {
-    /// Begin recording the command buffer.
-    VkCommandBufferBeginInfo begin_info{};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    assert_success(vkBeginCommandBuffer(command_buffer, &begin_info));
+void vk::context::create_sync_objects() {
+    VkSemaphoreCreateInfo semaphore_info{};
+    semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
-    /// Start a render pass.
-    VkRenderPassBeginInfo render_pass_begin_info{};
-    render_pass_begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    render_pass_begin_info.renderPass = render_pass;
-    render_pass_begin_info.framebuffer = swap_chain_framebuffers[img_index];
-    render_pass_begin_info.renderArea.offset = { 0, 0 };
-    render_pass_begin_info.renderArea.extent = swap_chain_extent;
+    VkFenceCreateInfo fence_info{};
+    fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT; /// We want to start with a fence in the signaled state.
 
-    VkClearValue clear_colour = { { { 0.18f, 0.16f, 0.18f, 1.0f } } };
-    render_pass_begin_info.clearValueCount = 1;
-    render_pass_begin_info.pClearValues = &clear_colour;
-    vkCmdBeginRenderPass(command_buffer, &render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
-
-    /// Bind the graphics pipeline.
-    vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
-
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = float(swap_chain_extent.width);
-    viewport.height = float(swap_chain_extent.height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(command_buffer, 0, 1, &viewport);
-
-    VkRect2D scissor{};
-    scissor.offset = { 0, 0 };
-    scissor.extent = swap_chain_extent;
-    vkCmdSetScissor(command_buffer, 0, 1, &scissor);
-
-    /// Draw the triangle.
-    vkCmdDraw(command_buffer, 3, 1, 0, 0);
-
-    /// End the render pass.
-    vkCmdEndRenderPass(command_buffer);
-    assert_success(vkEndCommandBuffer(command_buffer), "failed to record command buffer");
+    assert_success(vkCreateSemaphore(device, &semaphore_info, nullptr, &image_available_semaphore), "failed to create semaphore");
+    assert_success(vkCreateSemaphore(device, &semaphore_info, nullptr, &render_finished_semaphore), "failed to create semaphore");
+    assert_success(vkCreateFence(device, &fence_info, nullptr, &in_flight_fence), "failed to create fence");
 }
-
 
 auto vk::context::create_shader_module(const std::vector<char>& code) -> VkShaderModule nonnull {
     VkShaderModuleCreateInfo create_info{};
@@ -625,6 +608,49 @@ auto vk::context::create_shader_module(const std::vector<char>& code) -> VkShade
     VkShaderModule shader_module;
     assert_success(vkCreateShaderModule(device, &create_info, nullptr, &shader_module), "failed to create shader module");
     return shader_module;
+}
+
+void vk::context::draw_frame() {
+    /// Wait for the previous frame to finish.
+    vkWaitForFences(device, 1, &in_flight_fence, VK_TRUE, UINT64_MAX);
+    vkResetFences(device, 1, &in_flight_fence);
+
+    /// Acquire an image from the swap chain.
+    u32 image_index;
+    vkAcquireNextImageKHR(device, swap_chain, UINT64_MAX, image_available_semaphore, VK_NULL_HANDLE, &image_index);
+
+    /// Record the command buffer.
+    vkResetCommandBuffer(command_buffer, 0);
+    record_command_buffer(command_buffer, image_index);
+
+    /// Submit the command buffer.
+    VkSemaphore wait_semaphores[] = { image_available_semaphore };
+    VkSemaphore signal_semaphores[] = { render_finished_semaphore };
+    VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+
+    VkSubmitInfo submit_info{};
+    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit_info.waitSemaphoreCount = 1;
+    submit_info.pWaitSemaphores = wait_semaphores;
+    submit_info.pWaitDstStageMask = wait_stages;
+    submit_info.commandBufferCount = 1;
+    submit_info.pCommandBuffers = &command_buffer;
+    submit_info.signalSemaphoreCount = 1;
+    submit_info.pSignalSemaphores = signal_semaphores;
+    assert_success(vkQueueSubmit(graphics_queue, 1, &submit_info, in_flight_fence), "failed to submit command buffer");
+
+    /// Present the image to the swap chain.
+    VkPresentInfoKHR present_info{};
+    present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    present_info.waitSemaphoreCount = 1;
+    present_info.pWaitSemaphores = signal_semaphores;
+
+    VkSwapchainKHR swap_chains[] = { swap_chain };
+    present_info.swapchainCount = 1;
+    present_info.pSwapchains = swap_chains;
+    present_info.pImageIndices = &image_index;
+
+    vkQueuePresentKHR(present_queue, &present_info);
 }
 
 /// Find available queue families.
@@ -719,6 +745,50 @@ auto vk::context::query_swap_chain_support(VkPhysicalDevice _Nonnull device) -> 
     return details;
 }
 
+void vk::context::record_command_buffer(VkCommandBuffer nonnull command_buffer, u32 img_index) {
+    /// Begin recording the command buffer.
+    VkCommandBufferBeginInfo begin_info{};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    assert_success(vkBeginCommandBuffer(command_buffer, &begin_info));
+
+    /// Start a render pass.
+    VkRenderPassBeginInfo render_pass_begin_info{};
+    render_pass_begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    render_pass_begin_info.renderPass = render_pass;
+    render_pass_begin_info.framebuffer = swap_chain_framebuffers[img_index];
+    render_pass_begin_info.renderArea.offset = { 0, 0 };
+    render_pass_begin_info.renderArea.extent = swap_chain_extent;
+
+    VkClearValue clear_colour = { { { 0.18f, 0.16f, 0.18f, 1.0f } } };
+    render_pass_begin_info.clearValueCount = 1;
+    render_pass_begin_info.pClearValues = &clear_colour;
+    vkCmdBeginRenderPass(command_buffer, &render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+
+    /// Bind the graphics pipeline.
+    vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = float(swap_chain_extent.width);
+    viewport.height = float(swap_chain_extent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(command_buffer, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset = { 0, 0 };
+    scissor.extent = swap_chain_extent;
+    vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+
+    /// Draw the triangle.
+    vkCmdDraw(command_buffer, 3, 1, 0, 0);
+
+    /// End the render pass.
+    vkCmdEndRenderPass(command_buffer);
+    assert_success(vkEndCommandBuffer(command_buffer), "failed to record command buffer");
+}
+
 ///
 /// API
 ///
@@ -727,8 +797,13 @@ void vk::context::poll() {
     glfwPollEvents();
 }
 
-void vk::context::run_forever(std::function<void()> tick) {
-    while (!should_terminate()) tick();
+void vk::context::run_forever() {
+    while (!should_terminate()) {
+        poll();
+        draw_frame();
+    }
+
+    vkDeviceWaitIdle(device);
 }
 
 bool vk::context::should_terminate() {
