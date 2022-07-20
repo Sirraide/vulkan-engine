@@ -56,7 +56,7 @@ template <typename... args_t>
 }
 
 template <typename... args_t>
-inline void assert_ok(VkResult res, fmt::format_string<args_t...> fmt_str = "", args_t&&... args) {
+inline void assert_success(VkResult res, fmt::format_string<args_t...> fmt_str = "", args_t&&... args) {
     if (res != VK_SUCCESS) {
         fmt::print(stderr, "[Vulkan] ");
         die(fmt_str, std::forward<args_t>(args)...);
