@@ -295,14 +295,11 @@ vk::context::context(int wd, int ht, std::string_view title) : wd(wd), ht(ht) {
         assert_success(vkCreateImageView(device, &create_info_image_view, nullptr, &swap_chain_image_views[i]), "failed to create image view");
     }
 
-    /// Create the render pass.
     create_render_pass();
-
-    /// Create the graphics pipeline.
     create_graphics_pipeline();
-
-    /// Create the framebuffers.
     create_framebuffers();
+    create_command_pool();
+    create_command_buffers();
 }
 
 vk::context::~context() {
@@ -314,10 +311,12 @@ vk::context::~context() {
         if (func != nullptr) func(instance, debug_messenger, nullptr);
     }
 #endif
+    vkDestroyCommandPool(device, command_pool, nullptr);
+    for (auto* framebuffer : swap_chain_framebuffers) vkDestroyFramebuffer(device, framebuffer, nullptr);
     vkDestroyPipeline(device, graphics_pipeline, nullptr);
     vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
     vkDestroyRenderPass(device, render_pass, nullptr);
-    for (auto image_view : swap_chain_image_views) vkDestroyImageView(device, image_view, nullptr);
+    for (auto* image_view : swap_chain_image_views) vkDestroyImageView(device, image_view, nullptr);
     vkDestroySwapchainKHR(device, swap_chain, nullptr);
     vkDestroyDevice(device, nullptr);
     vkDestroySurfaceKHR(instance, surface, nullptr);
@@ -536,9 +535,86 @@ void vk::context::create_graphics_pipeline() {
         "failed to create graphics pipeline");
 }
 
-auto vk::context::create_framebuffers() {
+void vk::context::create_framebuffers() {
+    swap_chain_framebuffers.resize(swap_chain_image_views.size());
+    for (u64 i = 0; i < swap_chain_image_views.size(); ++i) {
+        VkImageView attachments[] = { swap_chain_image_views[i] };
 
+        VkFramebufferCreateInfo framebuffer_info{};
+        framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebuffer_info.renderPass = render_pass;
+        framebuffer_info.attachmentCount = 1;
+        framebuffer_info.pAttachments = attachments;
+        framebuffer_info.width = swap_chain_extent.width;
+        framebuffer_info.height = swap_chain_extent.height;
+        framebuffer_info.layers = 1;
+        assert_success(vkCreateFramebuffer(device, &framebuffer_info, nullptr, &swap_chain_framebuffers[i]), "failed to create framebuffer");
+    }
 }
+
+void vk::context::create_command_pool() {
+    auto indices = find_queue_families(physical_device);
+
+    VkCommandPoolCreateInfo pool_info{};
+    pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    pool_info.queueFamilyIndex = indices.graphics_family.value();
+    assert_success(vkCreateCommandPool(device, &pool_info, nullptr, &command_pool), "failed to create command pool");
+}
+
+void vk::context::create_command_buffer() {
+    VkCommandBufferAllocateInfo alloc_info{};
+    alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    alloc_info.commandPool = command_pool;
+    alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc_info.commandBufferCount = 1;
+    assert_success(vkAllocateCommandBuffers(device, &alloc_info, &command_buffer), "failed to allocate command buffer");
+}
+
+void vk::context::record_command_buffer(VkCommandBuffer nonnull command_buffer, u32 img_index) {
+    /// Begin recording the command buffer.
+    VkCommandBufferBeginInfo begin_info{};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    assert_success(vkBeginCommandBuffer(command_buffer, &begin_info));
+
+    /// Start a render pass.
+    VkRenderPassBeginInfo render_pass_begin_info{};
+    render_pass_begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    render_pass_begin_info.renderPass = render_pass;
+    render_pass_begin_info.framebuffer = swap_chain_framebuffers[img_index];
+    render_pass_begin_info.renderArea.offset = { 0, 0 };
+    render_pass_begin_info.renderArea.extent = swap_chain_extent;
+
+    VkClearValue clear_colour = { { { 0.18f, 0.16f, 0.18f, 1.0f } } };
+    render_pass_begin_info.clearValueCount = 1;
+    render_pass_begin_info.pClearValues = &clear_colour;
+    vkCmdBeginRenderPass(command_buffer, &render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+
+    /// Bind the graphics pipeline.
+    vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = float(swap_chain_extent.width);
+    viewport.height = float(swap_chain_extent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(command_buffer, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset = { 0, 0 };
+    scissor.extent = swap_chain_extent;
+    vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+
+    /// Draw the triangle.
+    vkCmdDraw(command_buffer, 3, 1, 0, 0);
+
+    /// End the render pass.
+    vkCmdEndRenderPass(command_buffer);
+    assert_success(vkEndCommandBuffer(command_buffer), "failed to record command buffer");
+}
+
 
 auto vk::context::create_shader_module(const std::vector<char>& code) -> VkShaderModule nonnull {
     VkShaderModuleCreateInfo create_info{};

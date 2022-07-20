@@ -28,6 +28,8 @@ struct swap_chain_support_details {
 /// The Vulkan context.
 struct context {
     /// Device handles etc.
+    VkCommandBuffer nonnull command_buffer;
+    VkCommandPool nonnull command_pool;
     VkDevice nonnull device;
     VkInstance nonnull instance;
     VkPhysicalDevice nonnull physical_device;
@@ -46,6 +48,7 @@ struct context {
     VkExtent2D swap_chain_extent;
     std::vector<VkImage nonnull> swap_chain_images;
     std::vector<VkImageView nonnull> swap_chain_image_views;
+    std::vector<VkFramebuffer nonnull> swap_chain_framebuffers;
 
     /// Window.
     GLFWwindow* nonnull window;
@@ -77,10 +80,15 @@ struct context {
     bool should_terminate();
 
     /// INTERNAL:
+    void create_swap_chain();
     void create_render_pass();
     void create_graphics_pipeline();
+    void create_framebuffers();
+    void create_command_pool();
+    void create_command_buffer();
+    void record_command_buffer(VkCommandBuffer nonnull command_buffer, u32 img_index);
+
     auto create_shader_module(const std::vector<char>& code) -> VkShaderModule nonnull;
-    void create_swap_chain();
     auto find_queue_families(VkPhysicalDevice nonnull device) -> queue_family_indices;
     u64 phys_dev_score(VkPhysicalDevice nonnull dev);
     auto query_swap_chain_support(VkPhysicalDevice nonnull device) -> swap_chain_support_details;
