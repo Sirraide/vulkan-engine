@@ -1,11 +1,13 @@
 #ifndef VULKAN_TEMPLATE_VERTEX_HH
 #define VULKAN_TEMPLATE_VERTEX_HH
+#define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <array>
 #include <glm/glm.hpp>
 #include <vulkan/vulkan_core.h>
 
 struct vertex {
-    glm::vec2 pos;
+    glm::vec3 pos;
     glm::vec3 colour;
     glm::vec2 tex_coord;
 
@@ -22,7 +24,7 @@ struct vertex {
 
         attribute_descriptions[0].binding = 0;
         attribute_descriptions[0].location = 0;
-        attribute_descriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+        attribute_descriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
         attribute_descriptions[0].offset = offsetof(vertex, pos);
 
         attribute_descriptions[1].binding = 0;

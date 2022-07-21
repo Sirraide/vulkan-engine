@@ -1,5 +1,7 @@
 #ifndef VULKAN_TEMPLATE_UTILS_HH
 #define VULKAN_TEMPLATE_UTILS_HH
+#define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 
 #include <cstdint>
 #include <fmt/format.h>

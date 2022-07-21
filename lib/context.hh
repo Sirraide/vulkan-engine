@@ -75,6 +75,11 @@ struct context {
     VkImageView nonnull texture_image_view;
     VkSampler nonnull texture_sampler;
 
+    /// Depth buffer.
+    VkImage nonnull depth_image;
+    VkDeviceMemory nonnull depth_image_memory;
+    VkImageView nonnull depth_image_view;
+
     /// Window.
     GLFWwindow* nonnull window;
     bool resized = false;
@@ -115,6 +120,7 @@ struct context {
     void create_graphics_pipeline();
     void create_framebuffers();
     void create_command_pool();
+    void create_depth_resources();
     void create_texture_image();
     void create_texture_image_view();
     void create_texture_sampler();
@@ -136,13 +142,16 @@ struct context {
     void create_image(u32 width, u32 height, VkFormat format, VkImageTiling tiling,
         VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage nonnull& image,
         VkDeviceMemory nonnull& image_memory);
-    auto create_image_view(VkImage nonnull image, VkFormat format) -> VkImageView nonnull;
+    auto create_image_view(VkImage nonnull image, VkFormat format, VkImageAspectFlags aspect_flags) -> VkImageView nonnull;
     auto create_shader_module(const std::vector<char>& code) -> VkShaderModule nonnull;
     void draw_frame();
     void end_single_time_commands(VkCommandBuffer nonnull command_buffer);
-    u32 find_memory_type(u32 type_filter, VkMemoryPropertyFlags properties);
+    auto find_depth_format() -> VkFormat;
+    auto find_memory_type(u32 type_filter, VkMemoryPropertyFlags properties) -> u32;
     auto find_queue_families(VkPhysicalDevice nonnull device) -> queue_family_indices;
-    u64 phys_dev_score(VkPhysicalDevice nonnull dev);
+    auto find_supported_format(const std::vector<VkFormat>& candidates, VkImageTiling tiling,
+        VkFormatFeatureFlags features) -> VkFormat;
+    auto phys_dev_score(VkPhysicalDevice nonnull dev) -> u64;
     auto query_swap_chain_support(VkPhysicalDevice nonnull device) -> swap_chain_support_details;
     void record_command_buffer(VkCommandBuffer nonnull command_buffer, u32 img_index);
     void recreate_swap_chain();
