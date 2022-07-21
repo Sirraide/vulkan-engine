@@ -69,16 +69,25 @@ struct context {
     VkDescriptorSetLayout nonnull descriptor_set_layout;
     std::vector<VkDescriptorSet nonnull> descriptor_sets;
 
+    /// Textures.
+    VkImage nonnull texture_image;
+    VkDeviceMemory nonnull texture_image_memory;
+    VkImageView nonnull texture_image_view;
+    VkSampler nonnull texture_sampler;
+
     /// Window.
     GLFWwindow* nonnull window;
     bool resized = false;
+
+    /// Miscellaneous.
+    std::string filename;
 
 #ifdef ENABLE_VALIDATION_LAYERS
     VkDebugUtilsMessengerEXT nonnull debug_messenger;
 #endif
 
     /// Create a new context and initialise Vulkan.
-    context(int wd, int ht, std::string_view title);
+    context(int wd, int ht, std::string_view title, std::string_view filename);
 
     /// Destroy the context and cleanup Vulkan if there are no contexts left.
     ~context();
@@ -106,6 +115,9 @@ struct context {
     void create_graphics_pipeline();
     void create_framebuffers();
     void create_command_pool();
+    void create_texture_image();
+    void create_texture_image_view();
+    void create_texture_sampler();
     void create_vertex_buffer();
     void create_index_buffer();
     void create_uniform_buffers();
@@ -115,18 +127,27 @@ struct context {
     void create_sync_objects();
 
     /// INTERNAL:
+    auto begin_single_time_commands() -> VkCommandBuffer nonnull;
     void cleanup_swap_chain();
     void copy_buffer(VkBuffer nonnull dest, VkBuffer nonnull src, VkDeviceSize size);
+    void copy_buffer_to_image(VkImage nonnull image, VkBuffer nonnull buffer, u32 width, u32 height);
     void create_buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
         VkBuffer nonnull& buffer, VkDeviceMemory nonnull& buffer_memory);
+    void create_image(u32 width, u32 height, VkFormat format, VkImageTiling tiling,
+        VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage nonnull& image,
+        VkDeviceMemory nonnull& image_memory);
+    auto create_image_view(VkImage nonnull image, VkFormat format) -> VkImageView nonnull;
     auto create_shader_module(const std::vector<char>& code) -> VkShaderModule nonnull;
     void draw_frame();
+    void end_single_time_commands(VkCommandBuffer nonnull command_buffer);
     u32 find_memory_type(u32 type_filter, VkMemoryPropertyFlags properties);
     auto find_queue_families(VkPhysicalDevice nonnull device) -> queue_family_indices;
     u64 phys_dev_score(VkPhysicalDevice nonnull dev);
     auto query_swap_chain_support(VkPhysicalDevice nonnull device) -> swap_chain_support_details;
     void record_command_buffer(VkCommandBuffer nonnull command_buffer, u32 img_index);
     void recreate_swap_chain();
+    void transition_image_layout(VkImage nonnull image, VkFormat format, VkImageLayout old_layout,
+        VkImageLayout new_layout);
     void update_uniform_buffer(u32 current_image);
 };
 

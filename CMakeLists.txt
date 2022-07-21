@@ -15,7 +15,7 @@ file(GLOB SRC src/*.cc src/*.hh)
 add_library(options INTERFACE)
 target_compile_options(options INTERFACE
         -Wall -Wextra -Wundef -Wconversion -Werror=return-type
-        -fno-exceptions -fno-rtti
+        -fno-rtti
         -Werror=nonnull -Werror=nullability
         -Werror=nullable-to-nonnull-conversion -Wnullability-completeness)
 if (CMAKE_BUILD_TYPE STREQUAL Release)
