@@ -78,12 +78,12 @@ struct context {
     VkDeviceMemory nonnull texture_image_memory;
     VkImageView nonnull texture_image_view;
     VkSampler nonnull texture_sampler;
+    u32 mip_levels;
 
     /// Depth buffer.
     VkImage nonnull depth_image;
     VkDeviceMemory nonnull depth_image_memory;
     VkImageView nonnull depth_image_view;
-
 
     /// Window.
     GLFWwindow* nonnull window;
@@ -145,10 +145,10 @@ struct context {
     void copy_buffer_to_image(VkImage nonnull image, VkBuffer nonnull buffer, u32 width, u32 height);
     void create_buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
         VkBuffer nonnull& buffer, VkDeviceMemory nonnull& buffer_memory);
-    void create_image(u32 width, u32 height, VkFormat format, VkImageTiling tiling,
+    void create_image(u32 width, u32 height, u32 mip_lvls, VkFormat format, VkImageTiling tiling,
         VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage nonnull& image,
         VkDeviceMemory nonnull& image_memory);
-    auto create_image_view(VkImage nonnull image, VkFormat format, VkImageAspectFlags aspect_flags) -> VkImageView nonnull;
+    auto create_image_view(VkImage nonnull image, VkFormat format, VkImageAspectFlags aspect_flags, u32 mip_lvls) -> VkImageView nonnull;
     auto create_shader_module(const std::vector<char>& code) -> VkShaderModule nonnull;
     void draw_frame();
     void end_single_time_commands(VkCommandBuffer nonnull command_buffer);
@@ -157,12 +157,13 @@ struct context {
     auto find_queue_families(VkPhysicalDevice nonnull device) -> queue_family_indices;
     auto find_supported_format(const std::vector<VkFormat>& candidates, VkImageTiling tiling,
         VkFormatFeatureFlags features) -> VkFormat;
+    void generate_mipmaps(VkImage nonnull image, VkFormat image_format, u32 wd, u32 ht, u32 mip_levels);
     auto phys_dev_score(VkPhysicalDevice nonnull dev) -> u64;
     auto query_swap_chain_support(VkPhysicalDevice nonnull device) -> swap_chain_support_details;
     void record_command_buffer(VkCommandBuffer nonnull command_buffer, u32 img_index);
     void recreate_swap_chain();
     void transition_image_layout(VkImage nonnull image, VkFormat format, VkImageLayout old_layout,
-        VkImageLayout new_layout);
+        VkImageLayout new_layout, u32 mip_lvls);
     void update_uniform_buffer(u32 current_image);
 };
 
