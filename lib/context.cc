@@ -322,29 +322,35 @@ vk::context::context(int wd, int ht, std::string_view title, std::string_view fi
     /// Create the surface.
     assert_success(glfwCreateWindowSurface(instance, window, nullptr, &surface), "failed to create surface");
 
-    /// Initialise the rest.
+    /// Window.
     pick_physical_device();
     create_logical_device();
-    create_swap_chain();
-    create_image_views();
-    create_render_pass();
-    create_descriptor_set_layout();
-    create_graphics_pipeline();
     create_command_pool();
-    create_colour_resources();
-    create_depth_resources();
-    create_framebuffers();
+    create_command_buffers();
+    create_sync_objects();
+
+    /// Model
     create_texture_image();
     create_texture_image_view();
-    create_texture_sampler();
     load_model();
     create_vertex_buffer();
     create_index_buffer();
+
+    /// Swap chain
+    create_swap_chain();
+    create_image_views();
+    create_render_pass();
+    create_colour_resources();
+    create_depth_resources();
+    create_framebuffers();
+
+    /// Pipeline
+    create_texture_sampler();
+    create_descriptor_set_layout();
     create_uniform_buffers();
     create_descriptor_pool();
     create_descriptor_sets();
-    create_command_buffers();
-    create_sync_objects();
+    create_graphics_pipeline();
 }
 
 void vk::context::pick_physical_device() {
@@ -1480,8 +1486,6 @@ void vk::context::record_command_buffer(VkCommandBuffer nonnull command_buffer, 
 
     vkCmdBeginRenderPass(command_buffer, &render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
     {
-        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
-
         VkViewport viewport{};
         viewport.x = 0.0f;
         viewport.y = 0.0f;
@@ -1498,6 +1502,8 @@ void vk::context::record_command_buffer(VkCommandBuffer nonnull command_buffer, 
 
         VkBuffer vertex_buffers[] = { vertex_buffer };
         VkDeviceSize offsets[] = { 0 };
+
+        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
         vkCmdBindVertexBuffers(command_buffer, 0, 1, vertex_buffers, offsets);
         vkCmdBindIndexBuffer(command_buffer, index_buffer, 0, VK_INDEX_TYPE_UINT32);
 
