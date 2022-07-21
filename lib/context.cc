@@ -1,8 +1,10 @@
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define STB_IMAGE_IMPLEMENTATION
+#define TINYOBJLOADER_IMPLEMENTATION
 #include "context.hh"
 
+#include "../3rdparty/tiny_obj_loader.h"
 #include "vertex.hh"
 
 #include <algorithm>
@@ -18,6 +20,8 @@
 #include <unistd.h>
 
 #define MAX_FRAMES_IN_FLIGHT 2
+#define MODEL_PATH           "assets/viking_room.obj"
+#define TEXTURE_PATH         "assets/viking_room.png"
 
 using namespace vk;
 defer_type_operator_lhs defer_type_operator_lhs::instance;
@@ -37,33 +41,6 @@ const std::vector<const char*> validation_layers = {
 
 const std::vector<const char*> required_device_extensions = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-};
-
-const std::vector<vertex> vertices = {
-    { { -0.5f, -0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f } },
-    { { 0.5f, -0.5f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f } },
-    { { 0.5f, 0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f } },
-    { { -0.5f, 0.5f, 0.0f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f } },
-
-    { { -0.5f, -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f } },
-    { { 0.5f, -0.5f, -0.5f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f } },
-    { { 0.5f, 0.5f, -0.5f }, { 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f } },
-    { { -0.5f, 0.5f, -0.5f }, { 1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f } },
-};
-
-const std::vector<u32> indices = {
-    0,
-    1,
-    2,
-    2,
-    3,
-    0,
-    4,
-    5,
-    6,
-    6,
-    7,
-    4,
 };
 
 /// Choose the best surface format.
@@ -343,6 +320,7 @@ vk::context::context(int wd, int ht, std::string_view title, std::string_view fi
     create_texture_image();
     create_texture_image_view();
     create_texture_sampler();
+    load_model();
     create_vertex_buffer();
     create_index_buffer();
     create_uniform_buffers();
@@ -723,12 +701,11 @@ void vk::context::create_depth_resources() {
         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         depth_image, depth_image_memory);
     depth_image_view = create_image_view(depth_image, depth_format, VK_IMAGE_ASPECT_DEPTH_BIT);
-
 }
 
 void vk::context::create_texture_image() {
     int tex_width, tex_height, tex_channels;
-    auto pixels = stbi_load(filename.data(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
+    auto pixels = stbi_load(TEXTURE_PATH, &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
     auto image_size = VkDeviceSize(tex_width) * VkDeviceSize(tex_height) * 4;
     if (!pixels) die("[STB] failed to load texture image \"{}\"", filename);
 
@@ -782,6 +759,57 @@ void vk::context::create_texture_sampler() {
     sampler_info.minLod = 0.0f;
     sampler_info.maxLod = 0.0f;
     assert_success(vkCreateSampler(device, &sampler_info, nullptr, &texture_sampler), "failed to create texture sampler");
+}
+
+void vk::context::load_model() {
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string warn, err;
+
+#ifdef ENABLE_VALIDATION_LAYERS
+    fmt::print(stderr, "[Loader] Loading model \"{}\"\n", MODEL_PATH);
+#endif
+
+    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH)) die("[Loader] failed to load model :{}\n{}", filename, err);
+
+#ifdef ENABLE_VALIDATION_LAYERS
+    if (!warn.empty()) fmt::print(stderr, "\033[33m[Loader] Warning: {}\n\033[m", warn);
+    if (!err.empty()) fmt::print(stderr, "\033[31m[Loader] Error: {}\n\033[m", err);
+#endif
+
+    std::unordered_map<vertex, u32> unique_vertices{};
+
+    for (const auto& shape : shapes) {
+        for (auto& index : shape.mesh.indices) {
+            vertex v{};
+
+            v.pos = {
+                attrib.vertices[3 * size_t(index.vertex_index) + 0],
+                attrib.vertices[3 * size_t(index.vertex_index) + 1],
+                attrib.vertices[3 * size_t(index.vertex_index) + 2],
+            };
+
+            v.tex_coord = {
+                attrib.texcoords[2 * size_t(index.texcoord_index) + 0],
+
+                /// In the .obj format, a vertical coordinate of `0` indicates the bottom
+                /// of the image, whereas in Vulkan `0` is the top of the image. We therefore
+                /// need to invert this.
+                1.0f - attrib.texcoords[2 * size_t(index.texcoord_index) + 1],
+            };
+
+            v.colour = { 1.0f, 1.0f, 1.0f };
+
+            /// New vertex.
+            if (unique_vertices.count(v) == 0) {
+                unique_vertices[v] = u32(vertices.size());
+                vertices.push_back(v);
+            }
+
+            indices.push_back(unique_vertices[v]);
+        }
+    }
 }
 
 void vk::context::create_vertex_buffer() {
@@ -1297,7 +1325,7 @@ void vk::context::record_command_buffer(VkCommandBuffer nonnull command_buffer, 
 
     /// The order of these must be identical to the order of the attachments.
     VkClearValue clear_values[2]{};
-    clear_values[0].color = { { 0.18f, 0.16f, 0.18f, 1.0f } };
+    clear_values[0].color = { { 0.018f, 0.016f, 0.018f, 1.0f } };
     clear_values[1].depthStencil = { 1.0f, 0 };
     render_pass_begin_info.clearValueCount = sizeof clear_values / sizeof *clear_values;
     render_pass_begin_info.pClearValues = clear_values;

@@ -3,6 +3,7 @@
 #define GLFW_INCLUDE_VULKAN
 
 #include "utils.hh"
+#include "vertex.hh"
 
 #include <functional>
 #include <GLFW/glfw3.h>
@@ -58,10 +59,13 @@ struct context {
     std::vector<VkDeviceMemory nonnull> uniform_buffers_memory;
     u32 current_frame = 0;
 
-    /// Buffers and memory.
+    /// Vertices and indices.
+    std::vector<vertex> vertices;
     VkBuffer nonnull vertex_buffer;
-    VkBuffer nonnull index_buffer;
     VkDeviceMemory nonnull vertex_buffer_memory;
+
+    std::vector<u32> indices;
+    VkBuffer nonnull index_buffer;
     VkDeviceMemory nonnull index_buffer_memory;
 
     /// Uniforms.
@@ -79,6 +83,7 @@ struct context {
     VkImage nonnull depth_image;
     VkDeviceMemory nonnull depth_image_memory;
     VkImageView nonnull depth_image_view;
+
 
     /// Window.
     GLFWwindow* nonnull window;
@@ -124,6 +129,7 @@ struct context {
     void create_texture_image();
     void create_texture_image_view();
     void create_texture_sampler();
+    void load_model();
     void create_vertex_buffer();
     void create_index_buffer();
     void create_uniform_buffers();

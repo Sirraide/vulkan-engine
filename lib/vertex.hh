@@ -2,14 +2,18 @@
 #define VULKAN_TEMPLATE_VERTEX_HH
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
+
 #include <array>
 #include <glm/glm.hpp>
+#include <glm/gtx/hash.hpp>
 #include <vulkan/vulkan_core.h>
 
 struct vertex {
     glm::vec3 pos;
     glm::vec3 colour;
     glm::vec2 tex_coord;
+
+    bool operator==(const vertex& other) const = default;
 
     static auto binding_description() -> VkVertexInputBindingDescription {
         VkVertexInputBindingDescription binding_description = {};
@@ -45,6 +49,13 @@ struct uniform_buffer_object {
     alignas(16) glm::mat4 model;
     alignas(16) glm::mat4 view;
     alignas(16) glm::mat4 proj;
+};
+
+template <>
+struct std::hash<vertex> {
+    size_t operator()(const vertex& v) const {
+        return ((std::hash<glm::vec3>()(v.pos) ^ (std::hash<glm::vec3>()(v.colour) << 1)) >> 1) ^ (std::hash<glm::vec2>()(v.tex_coord) << 1);
+    }
 };
 
 #endif // VULKAN_TEMPLATE_VERTEX_HH
