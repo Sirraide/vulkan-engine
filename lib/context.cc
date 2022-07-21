@@ -81,10 +81,6 @@ VkExtent2D choose_swap_extent(const VkSurfaceCapabilitiesKHR& capabilities, GLFW
     return actual_extent;
 }
 
-bool has_stencil_component(VkFormat format) {
-    return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
-}
-
 inline std::vector<char> map_file(const char* filename) {
     int fd = ::open(filename, O_RDONLY);
     if (fd < 0) [[unlikely]]
@@ -125,6 +121,7 @@ VkSampleCountFlagBits phys_max_usable_sample_count(VkPhysicalDevice dev) {
 }
 
 
+#ifdef ENABLE_VALIDATION_LAYERS
 /// Handle Vulkan errors.
 static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_callback(
     VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
@@ -132,23 +129,21 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_callback(
     const VkDebugUtilsMessengerCallbackDataEXT* callback_data,
     void*) {
     switch (message_severity) {
-        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT: fmt::print(stderr, "[Vulkan] Info"); break;
-        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT: fmt::print(stderr, "[Vulkan] Info"); break;
-        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT: fmt::print(stderr, "\033[33m[Vulkan] Warning"); break;
-        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT: fmt::print(stderr, "\033[31m[Vulkan] Error"); break;
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT: fmt::print(stderr, "[Vulkan] "); break;
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT: fmt::print(stderr, "[Vulkan] "); break;
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT:
+            if (message_type == VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT) fmt::print(stderr, "\033[34m[Vulkan] ");
+            else fmt::print(stderr, "\033[33m[Vulkan] ");
+            break;
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT: fmt::print(stderr, "\033[31m[Vulkan] "); break;
         default: fmt::print(stderr, "[Vulkan] "); break;
-    }
-
-    switch (message_type) {
-        case VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT: fmt::print(stderr, " (Validation): "); break;
-        case VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT: fmt::print(stderr, " (Performance): "); break;
-        default: fmt::print(stderr, ": "); break;
     }
 
     fmt::print(stderr, "{}\033[m\n", callback_data->pMessage);
     if (message_severity == VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) std::exit(1);
     return VK_FALSE;
 }
+#endif
 
 /// Initialise Vulkan.
 void vulkan_init() {
@@ -225,8 +220,8 @@ vk::context::context(int wd, int ht, std::string_view title, std::string_view fi
 
     /// Tell GLFW to notify us when the window is resized.
     glfwSetWindowUserPointer(window, this);
-    glfwSetFramebufferSizeCallback(window, [](GLFWwindow* nonnull w, int, int) {
-        auto* ctx = (vk::context * nonnull) glfwGetWindowUserPointer(w);
+    glfwSetFramebufferSizeCallback(window, [](GLFWwindow* w, int, int) {
+        auto* ctx = (vk::context *) glfwGetWindowUserPointer(w);
         ctx->resized = true;
     });
 
@@ -326,6 +321,13 @@ vk::context::context(int wd, int ht, std::string_view title, std::string_view fi
     create_colour_resources();
     create_depth_resources();
     create_framebuffers();
+
+    /// Pipeline
+    create_texture_sampler();
+    create_descriptor_set_layout();
+    create_uniform_buffers();
+    create_descriptor_pool();
+    create_graphics_pipeline();
 }
 
 void vk::context::pick_physical_device() {
@@ -776,7 +778,7 @@ void vk::context::create_descriptor_pool() {
     assert_success(vkCreateDescriptorPool(device, &pool_info, nullptr, &descriptor_pool), "failed to create descriptor pool");
 }
 
-void vk::context::create_descriptor_sets() {
+void vk::context::create_descriptor_sets(std::vector<VkDescriptorSet>& descriptor_sets, VkImageView view) {
     std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptor_set_layout);
     VkDescriptorSetAllocateInfo alloc_info{};
     alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -795,7 +797,7 @@ void vk::context::create_descriptor_sets() {
 
         VkDescriptorImageInfo image_info{};
         image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        image_info.imageView = model->texture_image_view;
+        image_info.imageView = view;
         image_info.sampler = texture_sampler;
 
         VkWriteDescriptorSet descriptor_writes[2]{};
@@ -849,7 +851,7 @@ void vk::context::create_sync_objects() {
     }
 }
 
-auto vk::context::begin_single_time_commands() -> VkCommandBuffer nonnull {
+auto vk::context::begin_single_time_commands() -> VkCommandBuffer {
     VkCommandBufferAllocateInfo alloc_info{};
     alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     alloc_info.commandPool = command_pool;
@@ -882,7 +884,7 @@ void vk::context::cleanup_swap_chain() {
     vkDestroySwapchainKHR(device, swap_chain, nullptr);
 }
 
-void vk::context::copy_buffer(VkBuffer nonnull dest, VkBuffer nonnull src, VkDeviceSize size) {
+void vk::context::copy_buffer(VkBuffer dest, VkBuffer src, VkDeviceSize size) {
     auto command_buffer = begin_single_time_commands();
 
     VkBufferCopy copy_region{};
@@ -892,7 +894,7 @@ void vk::context::copy_buffer(VkBuffer nonnull dest, VkBuffer nonnull src, VkDev
     end_single_time_commands(command_buffer);
 }
 
-void vk::context::copy_buffer_to_image(VkImage nonnull image, VkBuffer nonnull buffer, u32 width, u32 height) {
+void vk::context::copy_buffer_to_image(VkImage image, VkBuffer buffer, u32 width, u32 height) {
     auto command_buffer = begin_single_time_commands();
 
     VkBufferImageCopy region{};
@@ -911,7 +913,7 @@ void vk::context::copy_buffer_to_image(VkImage nonnull image, VkBuffer nonnull b
 }
 
 void vk::context::create_buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
-    VkBuffer nonnull& buffer, VkDeviceMemory nonnull& buffer_memory) {
+    VkBuffer& buffer, VkDeviceMemory& buffer_memory) {
     /// Create the buffer.
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -933,8 +935,8 @@ void vk::context::create_buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkM
 }
 
 void vk::context::create_image(u32 width, u32 height, u32 mip_lvls, VkSampleCountFlagBits samples, VkFormat format, VkImageTiling tiling,
-    VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage nonnull& image,
-    VkDeviceMemory nonnull& image_memory) {
+    VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image,
+    VkDeviceMemory& image_memory) {
     VkImageCreateInfo image_info{};
     image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     image_info.imageType = VK_IMAGE_TYPE_2D;
@@ -963,7 +965,7 @@ void vk::context::create_image(u32 width, u32 height, u32 mip_lvls, VkSampleCoun
     vkBindImageMemory(device, image, image_memory, 0);
 }
 
-auto vk::context::create_image_view(VkImage nonnull image, VkFormat format, VkImageAspectFlags aspect_flags, u32 mip_lvls) -> VkImageView nonnull {
+auto vk::context::create_image_view(VkImage image, VkFormat format, VkImageAspectFlags aspect_flags, u32 mip_lvls) -> VkImageView {
     VkImageViewCreateInfo view_info{};
     view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     view_info.image = image;
@@ -981,7 +983,7 @@ auto vk::context::create_image_view(VkImage nonnull image, VkFormat format, VkIm
     return image_view;
 }
 
-auto vk::context::create_shader_module(const std::vector<char>& code) -> VkShaderModule nonnull {
+auto vk::context::create_shader_module(const std::vector<char>& code) -> VkShaderModule {
     VkShaderModuleCreateInfo create_info{};
     create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     create_info.codeSize = code.size();
@@ -992,7 +994,7 @@ auto vk::context::create_shader_module(const std::vector<char>& code) -> VkShade
     return shader_module;
 }
 
-void vk::context::draw_frame() {
+void vk::context::draw_frame(const render_callback& tick) {
     /// Wait for the previous frame to finish.
     vkWaitForFences(device, 1, &in_flight_fences[current_frame], VK_TRUE, UINT64_MAX);
 
@@ -1011,7 +1013,7 @@ void vk::context::draw_frame() {
 
     /// Record the command buffer.
     vkResetCommandBuffer(command_buffers[current_frame], 0);
-    record_command_buffer(command_buffers[current_frame], image_index);
+    record_command_buffer(tick, command_buffers[current_frame], image_index);
 
     /// Submit the command buffer.
     VkSemaphore wait_semaphores[] = { image_available_semaphores[current_frame] };
@@ -1054,7 +1056,7 @@ void vk::context::draw_frame() {
     current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
-void vk::context::end_single_time_commands(VkCommandBuffer nonnull command_buffer) {
+void vk::context::end_single_time_commands(VkCommandBuffer command_buffer) {
     vkEndCommandBuffer(command_buffer);
 
     VkSubmitInfo submit_info{};
@@ -1128,7 +1130,7 @@ auto vk::context::find_supported_format(const std::vector<VkFormat>& candidates,
     die("[Vulkan] Failed to find supported format");
 }
 
-void vk::context::generate_mipmaps(VkImage nonnull image, VkFormat image_format, u32 wd, u32 ht, u32 mip_lvls) {
+void vk::context::generate_mipmaps(VkImage image, VkFormat image_format, u32 wd, u32 ht, u32 mip_lvls) {
     VkFormatProperties format_props;
     vkGetPhysicalDeviceFormatProperties(physical_device, image_format, &format_props);
     if (!(format_props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
@@ -1294,7 +1296,8 @@ auto vk::context::query_swap_chain_support(VkPhysicalDevice _Nonnull device) -> 
     return details;
 }
 
-void vk::context::record_command_buffer(VkCommandBuffer nonnull command_buffer, u32 img_index) {
+void vk::context::record_command_buffer(const render_callback& tick,
+    VkCommandBuffer command_buffer, u32 img_index) {
     /// Begin recording the command buffer.
     VkCommandBufferBeginInfo begin_info{};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -1332,7 +1335,7 @@ void vk::context::record_command_buffer(VkCommandBuffer nonnull command_buffer, 
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
-        model->draw(command_buffer);
+        tick(command_buffer);
     }
     vkCmdEndRenderPass(command_buffer);
 
@@ -1358,7 +1361,7 @@ void vk::context::recreate_swap_chain() {
     create_framebuffers();
 }
 
-void vk::context::transition_image_layout(VkImage nonnull image, VkFormat format, VkImageLayout old_layout,
+void vk::context::transition_image_layout(VkImage image, VkFormat, VkImageLayout old_layout,
     VkImageLayout new_layout, u32 mip_lvls) {
     auto command_buffer = begin_single_time_commands();
 
@@ -1426,18 +1429,10 @@ void vk::context::poll() {
     glfwPollEvents();
 }
 
-void vk::context::run_forever() {
-    /// Pipeline
-    create_texture_sampler();
-    create_descriptor_set_layout();
-    create_uniform_buffers();
-    create_descriptor_pool();
-    create_descriptor_sets();
-    create_graphics_pipeline();
-
+void vk::context::run_forever(render_callback tick) {
     while (!should_terminate()) {
         poll();
-        draw_frame();
+        draw_frame(tick);
     }
 
     vkDeviceWaitIdle(device);

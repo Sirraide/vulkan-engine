@@ -104,9 +104,7 @@ vk::vertex_buffer::~vertex_buffer() {
     }
 }
 
-void vk::vertex_buffer::draw(VkCommandBuffer command_buffer) {
+void vk::vertex_buffer::bind(VkCommandBuffer command_buffer) {
     vkCmdBindVertexBuffers(command_buffer, 0, 1, &vk_vertbuf, &offsets);
     vkCmdBindIndexBuffer(command_buffer, vk_idxbuf, 0, VK_INDEX_TYPE_UINT32);
-    vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx->pipeline_layout, 0, 1, &ctx->descriptor_sets[ctx->current_frame], 0, nullptr);
-    vkCmdDrawIndexed(command_buffer, u32(index_count), 1, 0, 0, 0);
 }

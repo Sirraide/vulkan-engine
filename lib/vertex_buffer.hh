@@ -17,7 +17,7 @@ struct vertex_buffer {
     VkDeviceMemory vk_vertbuf_mem;
     VkDeviceMemory vk_idxbuf_mem;
 
-    /// For the draw call.
+    /// For the bind call.
     VkDeviceSize offsets = {0};
 
     u64 index_count;
@@ -32,7 +32,7 @@ struct vertex_buffer {
     nocopy(vertex_buffer);
 
     /// Draw the contents of the vertex buffer.
-    void draw(VkCommandBuffer command_buffer);
+    void bind(VkCommandBuffer command_buffer);
 };
 
 }

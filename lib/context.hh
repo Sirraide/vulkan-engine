@@ -29,6 +29,8 @@ struct swap_chain_support_details {
 
 /// The Vulkan context.
 struct context {
+    using render_callback = std::function<void(VkCommandBuffer)>;
+
     /// Device handles etc.
     VkCommandPool command_pool;
     VkDevice device;
@@ -63,7 +65,6 @@ struct context {
     /// Uniforms.
     VkDescriptorPool descriptor_pool;
     VkDescriptorSetLayout descriptor_set_layout;
-    std::vector<VkDescriptorSet> descriptor_sets;
     VkSampler texture_sampler;
 
     /// Depth buffer.
@@ -80,9 +81,6 @@ struct context {
     /// Window.
     GLFWwindow* window;
     bool resized = false;
-
-    /// Model
-    model* model;
 
     /// Miscellaneous.
     std::string filename;
@@ -105,7 +103,7 @@ struct context {
     void poll();
 
     /// Run the context forever.
-    void run_forever();
+    void run_forever(render_callback tick);
 
     /// Whether the main loop should terminate.
     bool should_terminate();
@@ -125,7 +123,7 @@ struct context {
     void create_texture_sampler();
     void create_uniform_buffers();
     void create_descriptor_pool();
-    void create_descriptor_sets();
+    void create_descriptor_sets(std::vector<VkDescriptorSet>& descriptor_sets, VkImageView view);
     void create_command_buffers();
     void create_sync_objects();
 
@@ -141,7 +139,7 @@ struct context {
         VkDeviceMemory& image_memory);
     auto create_image_view(VkImage image, VkFormat format, VkImageAspectFlags aspect_flags, u32 mip_lvls) -> VkImageView;
     auto create_shader_module(const std::vector<char>& code) -> VkShaderModule;
-    void draw_frame();
+    void draw_frame(const render_callback& tick);
     void end_single_time_commands(VkCommandBuffer command_buffer);
     auto find_depth_format() -> VkFormat;
     auto find_memory_type(u32 type_filter, VkMemoryPropertyFlags properties) -> u32;
@@ -151,7 +149,7 @@ struct context {
     void generate_mipmaps(VkImage image, VkFormat image_format, u32 wd, u32 ht, u32 mip_levels);
     auto phys_dev_score(VkPhysicalDevice dev) -> u64;
     auto query_swap_chain_support(VkPhysicalDevice device) -> swap_chain_support_details;
-    void record_command_buffer(VkCommandBuffer command_buffer, u32 img_index);
+    void record_command_buffer(const render_callback& tick, VkCommandBuffer command_buffer, u32 img_index);
     void recreate_swap_chain();
     void transition_image_layout(VkImage image, VkFormat format, VkImageLayout old_layout,
         VkImageLayout new_layout, u32 mip_lvls);

@@ -5,6 +5,7 @@
 
 namespace vk {
 struct context;
+struct renderer;
 
 struct model {
     context* ctx;
@@ -15,10 +16,13 @@ struct model {
     VkImageView texture_image_view;
     u32 mip_levels;
 
+    /// Descriptors.
+    std::vector<VkDescriptorSet> descriptor_sets;
+
     /// Vertices and indices.
     vertex_buffer verts;
 
-    model(context* ctx, std::string_view texture_path, std::string_view obj_path);
+    model(context* r, std::string_view texture_path, std::string_view obj_path);
     ~model();
 
     /// Draw the model. Returns the number of indices.
@@ -29,6 +33,7 @@ struct model {
     nomove(model);
 
     /// INTERNAL:
+    void create_descriptor_sets();
     void load_model(std::string_view obj_path);
     void load_texture(std::string_view texture_path);
 };

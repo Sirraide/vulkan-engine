@@ -12,9 +12,10 @@ int main(int argc, char** argv) {
     auto opts = options::parse(argc, argv);
     vk::context ctx{800, 600, "Vulkan Template", opts.get<"filename">()};
     vk::model room_model(&ctx, "assets/viking_room.png", "assets/viking_room.obj");
-    ctx.model = &room_model;
 
-    ctx.run_forever();
+    ctx.run_forever([&](VkCommandBuffer command_buffer) {
+        room_model.draw(command_buffer);
+    });
     //vk::context ctx{800, 600, "Vulkan Template"};
     /*vk::model room_model(ctx, "assets/viking_room.obj", "assets/viking_room.png");
     vk::renderer(ctx, "out/vert.spv", "out/frag.spv");

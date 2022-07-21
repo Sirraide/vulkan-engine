@@ -1,12 +1,14 @@
 #include "model.hh"
 #include "context.hh"
+#include "renderer.hh"
 #include <stb/stb_image.h>
 #include <../3rdparty/tiny_obj_loader.h>
 
-vk::model::model(context* nonnull ctx, std::string_view texture_path, std::string_view obj_path)
-    : ctx(ctx) {
+vk::model::model(context* r, std::string_view texture_path, std::string_view obj_path)
+    : ctx(r) {
      load_texture(texture_path);
      load_model(obj_path);
+     create_descriptor_sets();
 }
 
 vk::model::~model() {
@@ -16,7 +18,13 @@ vk::model::~model() {
 }
 
 void vk::model::draw(VkCommandBuffer command_buffer) {
-    verts.draw(command_buffer);
+    verts.bind(command_buffer);
+    vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, ctx->pipeline_layout, 0, 1, &descriptor_sets[ctx->current_frame], 0, nullptr);
+    vkCmdDrawIndexed(command_buffer, u32(verts.index_count), 1, 0, 0, 0);
+}
+
+void vk::model::create_descriptor_sets() {
+    ctx->create_descriptor_sets(descriptor_sets, texture_image_view);
 }
 
 void vk::model::load_model(std::string_view obj_path) {
