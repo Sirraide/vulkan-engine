@@ -11,6 +11,9 @@ using options = clopts< // clang-format off
 int main(int argc, char** argv) {
     auto opts = options::parse(argc, argv);
     vk::context ctx{800, 600, "Vulkan Template", opts.get<"filename">()};
+    vk::model room_model(&ctx, "assets/viking_room.png", "assets/viking_room.obj");
+    ctx.model = &room_model;
+
     ctx.run_forever();
     //vk::context ctx{800, 600, "Vulkan Template"};
     /*vk::model room_model(ctx, "assets/viking_room.obj", "assets/viking_room.png");

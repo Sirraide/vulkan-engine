@@ -182,18 +182,8 @@ vk::context::~context() {
     vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
 
     vkDestroySampler(device, texture_sampler, nullptr);
-    vkDestroyImageView(device, texture_image_view, nullptr);
-
-    vkDestroyImage(device, texture_image, nullptr);
-    vkFreeMemory(device, texture_image_memory, nullptr);
 
     vkDestroyDescriptorSetLayout(device, descriptor_set_layout, nullptr);
-
-    vkDestroyBuffer(device, index_buffer, nullptr);
-    vkFreeMemory(device, index_buffer_memory, nullptr);
-
-    vkDestroyBuffer(device, vertex_buffer, nullptr);
-    vkFreeMemory(device, vertex_buffer_memory, nullptr);
 
     for (u64 i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroySemaphore(device, render_finished_semaphores[i], nullptr);
@@ -329,13 +319,6 @@ vk::context::context(int wd, int ht, std::string_view title, std::string_view fi
     create_command_buffers();
     create_sync_objects();
 
-    /// Model
-    create_texture_image();
-    create_texture_image_view();
-    load_model();
-    create_vertex_buffer();
-    create_index_buffer();
-
     /// Swap chain
     create_swap_chain();
     create_image_views();
@@ -343,14 +326,6 @@ vk::context::context(int wd, int ht, std::string_view title, std::string_view fi
     create_colour_resources();
     create_depth_resources();
     create_framebuffers();
-
-    /// Pipeline
-    create_texture_sampler();
-    create_descriptor_set_layout();
-    create_uniform_buffers();
-    create_descriptor_pool();
-    create_descriptor_sets();
-    create_graphics_pipeline();
 }
 
 void vk::context::pick_physical_device() {
@@ -751,43 +726,6 @@ void vk::context::create_depth_resources() {
     depth_image_view = create_image_view(depth_image, depth_format, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
 }
 
-void vk::context::create_texture_image() {
-    int tex_width, tex_height, tex_channels;
-    auto pixels = stbi_load(TEXTURE_PATH, &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
-    auto image_size = VkDeviceSize(tex_width) * VkDeviceSize(tex_height) * 4;
-    if (!pixels) die("[STB] failed to load texture image \"{}\"", filename);
-
-    mip_levels = u32(std::floor(std::log2(std::max(tex_width, tex_height)))) + 1;
-
-    VkBuffer staging_buffer;
-    VkDeviceMemory staging_buffer_memory;
-    create_buffer(image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        staging_buffer, staging_buffer_memory);
-
-    void* data;
-    vkMapMemory(device, staging_buffer_memory, 0, image_size, 0, &data);
-    memcpy(data, pixels, image_size);
-    vkUnmapMemory(device, staging_buffer_memory);
-
-    stbi_image_free(pixels);
-
-    create_image(u32(tex_width), u32(tex_height), mip_levels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
-        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, texture_image, texture_image_memory);
-
-    transition_image_layout(texture_image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, mip_levels);
-    copy_buffer_to_image(texture_image, staging_buffer, u32(tex_width), u32(tex_height));
-    generate_mipmaps(texture_image, VK_FORMAT_R8G8B8A8_SRGB, u32(tex_width), u32(tex_height), mip_levels);
-
-    vkDestroyBuffer(device, staging_buffer, nullptr);
-    vkFreeMemory(device, staging_buffer_memory, nullptr);
-}
-
-void vk::context::create_texture_image_view() {
-    texture_image_view = create_image_view(texture_image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, mip_levels);
-}
-
 void vk::context::create_texture_sampler() {
     VkPhysicalDeviceProperties properties;
     vkGetPhysicalDeviceProperties(physical_device, &properties);
@@ -810,113 +748,6 @@ void vk::context::create_texture_sampler() {
     sampler_info.minLod = 0.0f;
     sampler_info.maxLod = VK_LOD_CLAMP_NONE;
     assert_success(vkCreateSampler(device, &sampler_info, nullptr, &texture_sampler), "failed to create texture sampler");
-}
-
-void vk::context::load_model() {
-    tinyobj::attrib_t attrib;
-    std::vector<tinyobj::shape_t> shapes;
-    std::vector<tinyobj::material_t> materials;
-    std::string warn, err;
-
-#ifdef ENABLE_VALIDATION_LAYERS
-    fmt::print(stderr, "[Loader] Loading model \"{}\"\n", MODEL_PATH);
-#endif
-
-    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH)) die("[Loader] failed to load model :{}\n{}", filename, err);
-
-#ifdef ENABLE_VALIDATION_LAYERS
-    if (!warn.empty()) fmt::print(stderr, "\033[33m[Loader] Warning: {}\n\033[m", warn);
-    if (!err.empty()) fmt::print(stderr, "\033[31m[Loader] Error: {}\n\033[m", err);
-#endif
-
-    std::unordered_map<vertex, u32> unique_vertices{};
-
-    for (const auto& shape : shapes) {
-        for (auto& index : shape.mesh.indices) {
-            vertex v{};
-
-            v.pos = {
-                attrib.vertices[3 * size_t(index.vertex_index) + 0],
-                attrib.vertices[3 * size_t(index.vertex_index) + 1],
-                attrib.vertices[3 * size_t(index.vertex_index) + 2],
-            };
-
-            v.tex_coord = {
-                attrib.texcoords[2 * size_t(index.texcoord_index) + 0],
-
-                /// In the .obj format, a vertical coordinate of `0` indicates the bottom
-                /// of the image, whereas in Vulkan `0` is the top of the image. We therefore
-                /// need to invert this.
-                1.0f - attrib.texcoords[2 * size_t(index.texcoord_index) + 1],
-            };
-
-            v.colour = { 1.0f, 1.0f, 1.0f };
-
-            /// New vertex.
-            if (unique_vertices.count(v) == 0) {
-                unique_vertices[v] = u32(vertices.size());
-                vertices.push_back(v);
-            }
-
-            indices.push_back(unique_vertices[v]);
-        }
-    }
-}
-
-void vk::context::create_vertex_buffer() {
-    auto buffer_size = sizeof(vertices[0]) * vertices.size();
-
-    /// Create a staging buffer.
-    VkBuffer staging_buffer;
-    VkDeviceMemory staging_buffer_memory;
-    create_buffer(buffer_size,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        staging_buffer,
-        staging_buffer_memory);
-
-    /// Copy the data to the buffer.
-    void* data;
-    vkMapMemory(device, staging_buffer_memory, 0, buffer_size, 0, &data);
-    memcpy(data, vertices.data(), (u64) buffer_size);
-    vkUnmapMemory(device, staging_buffer_memory);
-
-    /// Create the vertex buffer.
-    create_buffer(buffer_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertex_buffer, vertex_buffer_memory);
-
-    /// Copy the data to the buffer and delete the staging buffer.
-    copy_buffer(vertex_buffer, staging_buffer, buffer_size);
-    vkDestroyBuffer(device, staging_buffer, nullptr);
-    vkFreeMemory(device, staging_buffer_memory, nullptr);
-}
-
-void vk::context::create_index_buffer() {
-    auto buffer_size = sizeof(indices[0]) * indices.size();
-
-    /// Create a staging buffer.
-    VkBuffer staging_buffer;
-    VkDeviceMemory staging_buffer_memory;
-    create_buffer(buffer_size,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        staging_buffer,
-        staging_buffer_memory);
-
-    /// Copy the data to the buffer.
-    void* data;
-    vkMapMemory(device, staging_buffer_memory, 0, buffer_size, 0, &data);
-    memcpy(data, indices.data(), (u64) buffer_size);
-    vkUnmapMemory(device, staging_buffer_memory);
-
-    /// Create the vertex buffer.
-    create_buffer(buffer_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, index_buffer, index_buffer_memory);
-
-    /// Copy the data to the buffer and delete the staging buffer.
-    copy_buffer(index_buffer, staging_buffer, buffer_size);
-    vkDestroyBuffer(device, staging_buffer, nullptr);
-    vkFreeMemory(device, staging_buffer_memory, nullptr);
 }
 
 void vk::context::create_uniform_buffers() {
@@ -964,7 +795,7 @@ void vk::context::create_descriptor_sets() {
 
         VkDescriptorImageInfo image_info{};
         image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        image_info.imageView = texture_image_view;
+        image_info.imageView = model->texture_image_view;
         image_info.sampler = texture_sampler;
 
         VkWriteDescriptorSet descriptor_writes[2]{};
@@ -1500,15 +1331,8 @@ void vk::context::record_command_buffer(VkCommandBuffer nonnull command_buffer, 
         scissor.extent = swap_chain_extent;
         vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
-        VkBuffer vertex_buffers[] = { vertex_buffer };
-        VkDeviceSize offsets[] = { 0 };
-
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
-        vkCmdBindVertexBuffers(command_buffer, 0, 1, vertex_buffers, offsets);
-        vkCmdBindIndexBuffer(command_buffer, index_buffer, 0, VK_INDEX_TYPE_UINT32);
-
-        vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &descriptor_sets[current_frame], 0, nullptr);
-        vkCmdDrawIndexed(command_buffer, static_cast<u32>(indices.size()), 1, 0, 0, 0);
+        model->draw(command_buffer);
     }
     vkCmdEndRenderPass(command_buffer);
 
@@ -1603,6 +1427,14 @@ void vk::context::poll() {
 }
 
 void vk::context::run_forever() {
+    /// Pipeline
+    create_texture_sampler();
+    create_descriptor_set_layout();
+    create_uniform_buffers();
+    create_descriptor_pool();
+    create_descriptor_sets();
+    create_graphics_pipeline();
+
     while (!should_terminate()) {
         poll();
         draw_frame();
