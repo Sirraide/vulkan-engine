@@ -109,6 +109,22 @@ inline std::vector<char> map_file(const char* filename) {
     return bytes;
 }
 
+VkSampleCountFlagBits phys_max_usable_sample_count(VkPhysicalDevice dev) {
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(dev, &props);
+
+    auto counts = props.limits.framebufferColorSampleCounts & props.limits.framebufferDepthSampleCounts;
+    if (counts & VK_SAMPLE_COUNT_64_BIT) return VK_SAMPLE_COUNT_64_BIT;
+    if (counts & VK_SAMPLE_COUNT_32_BIT) return VK_SAMPLE_COUNT_32_BIT;
+    if (counts & VK_SAMPLE_COUNT_16_BIT) return VK_SAMPLE_COUNT_16_BIT;
+    if (counts & VK_SAMPLE_COUNT_8_BIT) return VK_SAMPLE_COUNT_8_BIT;
+    if (counts & VK_SAMPLE_COUNT_4_BIT) return VK_SAMPLE_COUNT_4_BIT;
+    if (counts & VK_SAMPLE_COUNT_2_BIT) return VK_SAMPLE_COUNT_2_BIT;
+    if (counts & VK_SAMPLE_COUNT_1_BIT) return VK_SAMPLE_COUNT_1_BIT;
+    return VK_SAMPLE_COUNT_1_BIT;
+}
+
+
 /// Handle Vulkan errors.
 static VKAPI_ATTR VkBool32 VKAPI_CALL vulkan_debug_callback(
     VkDebugUtilsMessageSeverityFlagBitsEXT message_severity,
@@ -315,6 +331,7 @@ vk::context::context(int wd, int ht, std::string_view title, std::string_view fi
     create_descriptor_set_layout();
     create_graphics_pipeline();
     create_command_pool();
+    create_colour_resources();
     create_depth_resources();
     create_framebuffers();
     create_texture_image();
@@ -344,6 +361,7 @@ void vk::context::pick_physical_device() {
     for (auto& dev : devices) devices_by_score.insert({ phys_dev_score(dev), dev });
     if (devices_by_score.rbegin()->first == 0) die("[Vulkan] No suitable devices available");
     physical_device = devices_by_score.rbegin()->second;
+    msaa_samples = phys_max_usable_sample_count(physical_device);
 }
 
 void vk::context::create_logical_device() {
@@ -364,6 +382,7 @@ void vk::context::create_logical_device() {
     /// Specify the features we want to use.
     VkPhysicalDeviceFeatures device_features{};
     device_features.samplerAnisotropy = VK_TRUE;
+    device_features.sampleRateShading = VK_TRUE;
 
     /// Create the logical device.
     VkDeviceCreateInfo create_info_device{};
@@ -454,24 +473,35 @@ void vk::context::create_render_pass() {
     /// Attachment descriptions.
     VkAttachmentDescription colour_attachment{};
     colour_attachment.format = swap_chain_image_format;
-    colour_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    colour_attachment.samples = msaa_samples;
     colour_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     colour_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     colour_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     colour_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     colour_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    colour_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    colour_attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     /// Depth attachment.
     VkAttachmentDescription depth_attachment{};
     depth_attachment.format = find_depth_format();
-    depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth_attachment.samples = msaa_samples;
     depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     depth_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     depth_attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    /// Resolve attachment for MSAA.
+    VkAttachmentDescription resolve_attachment{};
+    resolve_attachment.format = swap_chain_image_format;
+    resolve_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    resolve_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    resolve_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    resolve_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    resolve_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    resolve_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    resolve_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
     /// Attachment references.
     VkAttachmentReference color_attachment_ref{};
@@ -482,12 +512,17 @@ void vk::context::create_render_pass() {
     depth_attachment_ref.attachment = 1;
     depth_attachment_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
+    VkAttachmentReference resolve_attachment_ref{};
+    resolve_attachment_ref.attachment = 2;
+    resolve_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
     /// Subpass.
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &color_attachment_ref;
     subpass.pDepthStencilAttachment = &depth_attachment_ref;
+    subpass.pResolveAttachments = &resolve_attachment_ref;
 
     /// Subpass dependencies.
     VkSubpassDependency dependency{};
@@ -499,7 +534,7 @@ void vk::context::create_render_pass() {
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
     /// Render pass.
-    VkAttachmentDescription attachments[2]{ colour_attachment, depth_attachment };
+    VkAttachmentDescription attachments[]{ colour_attachment, depth_attachment, resolve_attachment };
     VkRenderPassCreateInfo create_info_render_pass{};
     create_info_render_pass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     create_info_render_pass.attachmentCount = sizeof attachments / sizeof *attachments;
@@ -613,9 +648,9 @@ void vk::context::create_graphics_pipeline() {
     /// Multisampling.
     VkPipelineMultisampleStateCreateInfo multisampling_info{};
     multisampling_info.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling_info.sampleShadingEnable = VK_FALSE;
-    multisampling_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    multisampling_info.minSampleShading = 1.0f;
+    multisampling_info.sampleShadingEnable = VK_TRUE;
+    multisampling_info.rasterizationSamples = msaa_samples;
+    multisampling_info.minSampleShading = .2f;
 
     /// Colour blending.
     VkPipelineColorBlendAttachmentState colour_blend_attachment{};
@@ -671,7 +706,7 @@ void vk::context::create_graphics_pipeline() {
 void vk::context::create_framebuffers() {
     swap_chain_framebuffers.resize(swap_chain_image_views.size());
     for (u64 i = 0; i < swap_chain_image_views.size(); ++i) {
-        VkImageView attachments[] = { swap_chain_image_views[i], depth_image_view };
+        VkImageView attachments[] = { colour_image_view, depth_image_view, swap_chain_image_views[i] };
 
         VkFramebufferCreateInfo framebuffer_info{};
         framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -695,9 +730,16 @@ void vk::context::create_command_pool() {
     assert_success(vkCreateCommandPool(device, &pool_info, nullptr, &command_pool), "failed to create command pool");
 }
 
+void vk::context::create_colour_resources() {
+    create_image(swap_chain_extent.width, swap_chain_extent.height, 1, msaa_samples, swap_chain_image_format,
+        VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, colour_image, colour_image_memory);
+    colour_image_view = create_image_view(colour_image, swap_chain_image_format, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+}
+
 void vk::context::create_depth_resources() {
     auto depth_format = find_depth_format();
-    create_image(swap_chain_extent.width, swap_chain_extent.height, 1, depth_format, VK_IMAGE_TILING_OPTIMAL,
+    create_image(swap_chain_extent.width, swap_chain_extent.height, 1, msaa_samples, depth_format, VK_IMAGE_TILING_OPTIMAL,
         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         depth_image, depth_image_memory);
     depth_image_view = create_image_view(depth_image, depth_format, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
@@ -723,7 +765,7 @@ void vk::context::create_texture_image() {
 
     stbi_image_free(pixels);
 
-    create_image(u32(tex_width), u32(tex_height), mip_levels, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
+    create_image(u32(tex_width), u32(tex_height), mip_levels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
         VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, texture_image, texture_image_memory);
 
@@ -989,11 +1031,17 @@ auto vk::context::begin_single_time_commands() -> VkCommandBuffer nonnull {
 }
 
 void vk::context::cleanup_swap_chain() {
+    vkDestroyImageView(device, colour_image_view, nullptr);
+    vkDestroyImage(device, colour_image, nullptr);
+    vkFreeMemory(device, colour_image_memory, nullptr);
+
     vkDestroyImageView(device, depth_image_view, nullptr);
     vkDestroyImage(device, depth_image, nullptr);
     vkFreeMemory(device, depth_image_memory, nullptr);
+
     for (auto* framebuffer : swap_chain_framebuffers) vkDestroyFramebuffer(device, framebuffer, nullptr);
     for (auto* image_view : swap_chain_image_views) vkDestroyImageView(device, image_view, nullptr);
+
     vkDestroySwapchainKHR(device, swap_chain, nullptr);
 }
 
@@ -1047,7 +1095,7 @@ void vk::context::create_buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkM
     vkBindBufferMemory(device, buffer, buffer_memory, 0);
 }
 
-void vk::context::create_image(u32 width, u32 height, u32 mip_lvls, VkFormat format, VkImageTiling tiling,
+void vk::context::create_image(u32 width, u32 height, u32 mip_lvls, VkSampleCountFlagBits samples, VkFormat format, VkImageTiling tiling,
     VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage nonnull& image,
     VkDeviceMemory nonnull& image_memory) {
     VkImageCreateInfo image_info{};
@@ -1063,7 +1111,7 @@ void vk::context::create_image(u32 width, u32 height, u32 mip_lvls, VkFormat for
     image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     image_info.usage = usage;
     image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.samples = samples;
     vkCreateImage(device, &image_info, nullptr, &image);
 
     VkMemoryRequirements mem_requirements;
@@ -1363,6 +1411,19 @@ u64 vk::context::phys_dev_score(VkPhysicalDevice dev) {
     /// Discrete GPUs have a high score.
     if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) score += 1000;
 
+    /// Devices that support a higher MSAA sample count have a higher score.
+    auto cnt = phys_max_usable_sample_count(dev);
+    switch(cnt) {
+        case VK_SAMPLE_COUNT_2_BIT: score += 50; break;
+        case VK_SAMPLE_COUNT_4_BIT: score += 100; break;
+        case VK_SAMPLE_COUNT_8_BIT: score += 150; break;
+        case VK_SAMPLE_COUNT_16_BIT: score += 200; break;
+        case VK_SAMPLE_COUNT_32_BIT: score += 300; break;
+        case VK_SAMPLE_COUNT_64_BIT: score += 350; break;
+
+        default: break;
+    }
+
     /// Add a score for the maximum resolution.
     score += props.limits.maxImageDimension2D;
 
@@ -1462,6 +1523,7 @@ void vk::context::recreate_swap_chain() {
 
     create_swap_chain();
     create_image_views();
+    create_colour_resources();
     create_depth_resources();
     create_framebuffers();
 }

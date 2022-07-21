@@ -85,6 +85,12 @@ struct context {
     VkDeviceMemory nonnull depth_image_memory;
     VkImageView nonnull depth_image_view;
 
+    /// MSAA
+    VkSampleCountFlagBits msaa_samples = VK_SAMPLE_COUNT_1_BIT;
+    VkImage nonnull colour_image;
+    VkDeviceMemory nonnull colour_image_memory;
+    VkImageView nonnull colour_image_view;
+
     /// Window.
     GLFWwindow* nonnull window;
     bool resized = false;
@@ -125,6 +131,7 @@ struct context {
     void create_graphics_pipeline();
     void create_framebuffers();
     void create_command_pool();
+    void create_colour_resources();
     void create_depth_resources();
     void create_texture_image();
     void create_texture_image_view();
@@ -145,7 +152,7 @@ struct context {
     void copy_buffer_to_image(VkImage nonnull image, VkBuffer nonnull buffer, u32 width, u32 height);
     void create_buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
         VkBuffer nonnull& buffer, VkDeviceMemory nonnull& buffer_memory);
-    void create_image(u32 width, u32 height, u32 mip_lvls, VkFormat format, VkImageTiling tiling,
+    void create_image(u32 width, u32 height, u32 mip_lvls, VkSampleCountFlagBits samples, VkFormat format, VkImageTiling tiling,
         VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage nonnull& image,
         VkDeviceMemory nonnull& image_memory);
     auto create_image_view(VkImage nonnull image, VkFormat format, VkImageAspectFlags aspect_flags, u32 mip_lvls) -> VkImageView nonnull;
