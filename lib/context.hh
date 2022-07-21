@@ -54,6 +54,8 @@ struct context {
     std::vector<VkSemaphore nonnull> image_available_semaphores;
     std::vector<VkSemaphore nonnull> render_finished_semaphores;
     std::vector<VkFence nonnull> in_flight_fences;
+    std::vector<VkBuffer nonnull> uniform_buffers;
+    std::vector<VkDeviceMemory nonnull> uniform_buffers_memory;
     u32 current_frame = 0;
 
     /// Buffers and memory.
@@ -61,6 +63,11 @@ struct context {
     VkBuffer nonnull index_buffer;
     VkDeviceMemory nonnull vertex_buffer_memory;
     VkDeviceMemory nonnull index_buffer_memory;
+
+    /// Uniforms.
+    VkDescriptorPool nonnull descriptor_pool;
+    VkDescriptorSetLayout nonnull descriptor_set_layout;
+    std::vector<VkDescriptorSet nonnull> descriptor_sets;
 
     /// Window.
     GLFWwindow* nonnull window;
@@ -95,11 +102,15 @@ struct context {
     void create_swap_chain();
     void create_image_views();
     void create_render_pass();
+    void create_descriptor_set_layout();
     void create_graphics_pipeline();
     void create_framebuffers();
     void create_command_pool();
     void create_vertex_buffer();
     void create_index_buffer();
+    void create_uniform_buffers();
+    void create_descriptor_pool();
+    void create_descriptor_sets();
     void create_command_buffers();
     void create_sync_objects();
 
@@ -116,6 +127,7 @@ struct context {
     auto query_swap_chain_support(VkPhysicalDevice nonnull device) -> swap_chain_support_details;
     void record_command_buffer(VkCommandBuffer nonnull command_buffer, u32 img_index);
     void recreate_swap_chain();
+    void update_uniform_buffer(u32 current_image);
 };
 
 } // namespace vk

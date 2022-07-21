@@ -33,4 +33,10 @@ struct vertex {
     }
 };
 
+struct uniform_buffer_object {
+    alignas(16) glm::mat4 model;
+    alignas(16) glm::mat4 view;
+    alignas(16) glm::mat4 proj;
+};
+
 #endif // VULKAN_TEMPLATE_VERTEX_HH
