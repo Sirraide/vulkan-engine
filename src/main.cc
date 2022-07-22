@@ -14,20 +14,16 @@ int main(int argc, char** argv) {
     auto opts = options::parse(argc, argv);
     vk::context ctx{ 800, 600, "Vulkan Template" };
 
-    VkDescriptorSetLayoutBinding ubo_layout_binding{};
+    vk::texture_renderer renderer(&ctx, "out/tex_shader_vert.spv", "out/tex_shader_frag.spv");
+    vk::texture_model room_model(&renderer, "assets/viking_room.png", "assets/viking_room.obj");
+
+/*    VkDescriptorSetLayoutBinding ubo_layout_binding_geom{};
     ubo_layout_binding.binding = 0;
     ubo_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     ubo_layout_binding.descriptorCount = 1; /// Dimension.
     ubo_layout_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
-    VkDescriptorSetLayoutBinding sampler_layout_binding{};
-    sampler_layout_binding.binding = 1;
-    sampler_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    sampler_layout_binding.descriptorCount = 1; /// Dimension.
-    sampler_layout_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    vk::renderer renderer(&ctx, "out/tex_vert.spv", "out/tex_frag.spv", { ubo_layout_binding, sampler_layout_binding });
-
-    vk::model room_model(&renderer, "assets/viking_room.png", "assets/viking_room.obj");
+    vk::geometric_renderer geom_renderer(&ctx, "out/geom_shader_vert.spv", "out/geom_shader_frag.spv", { ubo_layout_binding_geom });
+    vk::geometric_model teapot(&geom_renderer, "assets/teapot.obj");*/
 
     ctx.run_forever([&](VkCommandBuffer command_buffer) {
         /// Update uniforms.

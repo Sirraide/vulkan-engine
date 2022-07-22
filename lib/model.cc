@@ -4,20 +4,20 @@
 #include <stb/stb_image.h>
 #include <../3rdparty/tiny_obj_loader.h>
 
-vk::model::model(renderer* r, std::string_view texture_path, std::string_view obj_path)
+vk::texture_model::texture_model(texture_renderer* r, std::string_view texture_path, std::string_view obj_path)
     : r(r) {
      load_texture(texture_path);
      load_model(obj_path);
      r->create_descriptor_sets(descriptor_sets, texture_image_view);
 }
 
-vk::model::~model() {
+vk::texture_model::~texture_model() {
     vkDestroyImageView(r->ctx->device, texture_image_view, nullptr);
     vkDestroyImage(r->ctx->device, texture_image, nullptr);
     vkFreeMemory(r->ctx->device, texture_image_memory, nullptr);
 }
 
-void vk::model::load_model(std::string_view obj_path) {
+void vk::texture_model::load_model(std::string_view obj_path) {
     tinyobj::attrib_t attrib;
     std::vector<tinyobj::shape_t> shapes;
     std::vector<tinyobj::material_t> materials;
@@ -88,7 +88,7 @@ void vk::model::load_model(std::string_view obj_path) {
     verts = vertex_buffer(r->ctx, vertices, indices);
 }
 
-void vk::model::load_texture(std::string_view texture_path) {
+void vk::texture_model::load_texture(std::string_view texture_path) {
     int tex_width, tex_height, tex_channels;
     auto pixels = stbi_load(texture_path.data(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
     auto image_size = VkDeviceSize(tex_width) * VkDeviceSize(tex_height) * 4;

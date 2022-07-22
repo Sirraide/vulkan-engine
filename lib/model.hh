@@ -5,10 +5,10 @@
 
 namespace vk {
 struct context;
-struct renderer;
+struct texture_renderer;
 
-struct model {
-    renderer* r;
+struct texture_model {
+    texture_renderer* r;
 
     /// Texture.
     VkImage texture_image;
@@ -22,12 +22,12 @@ struct model {
     /// Vertices and indices.
     vertex_buffer verts;
 
-    model(renderer* r, std::string_view texture_path, std::string_view obj_path);
-    ~model();
+    texture_model(texture_renderer* r, std::string_view texture_path, std::string_view obj_path);
+    ~texture_model();
 
     /// Don't want to deal w/ this rn.
-    nocopy(model);
-    nomove(model);
+    nocopy(texture_model);
+    nomove(texture_model);
 
     /// INTERNAL:
     void load_model(std::string_view obj_path);

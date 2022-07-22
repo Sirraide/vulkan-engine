@@ -93,7 +93,7 @@ struct context {
     nomove(context);
 
     /// Bind a renderer to this context.
-    void bind(renderer& r);
+    void bind(texture_renderer& r);
 
     /// Poll window events.
     void poll();

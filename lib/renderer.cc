@@ -1,37 +1,50 @@
 #include "renderer.hh"
+
 #include "context.hh"
 
+#ifdef ENABLE_VALIDATION_LAYERS
+#    define CHECK_MOVE_PIPELINE(other)                                                 \
+        do {                                                                           \
+            if (this == std::addressof(other)) die("Cannot move pipeline to itself."); \
+        } while (0)
+#else
+#    define CHECK_MOVE_PIPELINE(other) \
+        do {                           \
+        } while (0)
+#endif
+
+#define MOVE_PIPELINE(other)                                              \
+    do {                                                                  \
+        CHECK_MOVE_PIPELINE(other);                                       \
+        descriptor_pool = other.descriptor_pool;                          \
+        descriptor_set_layout = other.descriptor_set_layout;              \
+        graphics_pipeline = other.graphics_pipeline;                      \
+        pipeline_layout = other.pipeline_layout;                          \
+        uniform_buffers = std::move(other.uniform_buffers);               \
+        uniform_buffers_memory = std::move(other.uniform_buffers_memory); \
+        other.graphics_pipeline = VK_NULL_HANDLE;                         \
+    } while (0)
+
 /// ======================================================================
-///  API
+///  Pipeline
 /// ======================================================================
-vk::renderer::renderer(context* ctx, std::string_view vert_path, std::string_view frag_path,
-    const std::vector<VkDescriptorSetLayoutBinding>& descriptor_set_layout_bindings)
-    : ctx(ctx) {
-    create_texture_sampler();
+vk::pipeline::pipeline(PIPELINE_CTOR_ARGS, const std::vector<VkDescriptorSetLayoutBinding>& descriptor_set_layout_bindings) : ctx(ctx) {
     create_descriptor_set_layout(descriptor_set_layout_bindings);
     create_uniform_buffers();
     create_descriptor_pool(descriptor_set_layout_bindings);
     create_graphics_pipeline(vert_path, frag_path);
 }
 
-vk::renderer::renderer(renderer&& other) noexcept {
+vk::pipeline::pipeline(pipeline&& other) noexcept : ctx(other.ctx) {
     *this = std::move(other);
 }
 
-auto vk::renderer::operator=(renderer&& other) noexcept -> renderer& {
-    descriptor_pool = other.descriptor_pool;
-    descriptor_set_layout = other.descriptor_set_layout;
-    graphics_pipeline = other.graphics_pipeline;
-    pipeline_layout = other.pipeline_layout;
-    texture_sampler = other.texture_sampler;
-    uniform_buffers = std::move(other.uniform_buffers);
-    uniform_buffers_memory = std::move(other.uniform_buffers_memory);
-
-    other.deleted();
+vk::pipeline& vk::pipeline::operator=(pipeline&& other) noexcept {
+    MOVE_PIPELINE(other);
     return *this;
 }
 
-vk::renderer::~renderer() {
+vk::pipeline::~pipeline() {
     if (graphics_pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(ctx->device, graphics_pipeline, nullptr);
         vkDestroyPipelineLayout(ctx->device, pipeline_layout, nullptr);
@@ -41,19 +54,14 @@ vk::renderer::~renderer() {
             vkFreeMemory(ctx->device, uniform_buffers_memory[i], nullptr);
         }
 
-        vkDestroySampler(ctx->device, texture_sampler, nullptr);
         vkDestroyDescriptorPool(ctx->device, descriptor_pool, nullptr);
         vkDestroyDescriptorSetLayout(ctx->device, descriptor_set_layout, nullptr);
 
-        deleted();
+        graphics_pipeline = VK_NULL_HANDLE;
     }
 }
 
-bool vk::renderer::bound() const {
-    return ctx->bound_pipeline == graphics_pipeline;
-}
-
-void vk::renderer::create_descriptor_sets(std::vector<VkDescriptorSet>& descriptor_sets, VkImageView view) {
+void vk::pipeline::allocate_descriptor_sets(std::vector<VkDescriptorSet>& descriptor_sets) {
     std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptor_set_layout);
     VkDescriptorSetAllocateInfo alloc_info{};
     alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -63,93 +71,13 @@ void vk::renderer::create_descriptor_sets(std::vector<VkDescriptorSet>& descript
 
     descriptor_sets.resize(MAX_FRAMES_IN_FLIGHT);
     assert_success(vkAllocateDescriptorSets(ctx->device, &alloc_info, descriptor_sets.data()), "failed to allocate descriptor sets");
-
-    for (u64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-        VkDescriptorBufferInfo buffer_info{};
-        buffer_info.buffer = uniform_buffers[i];
-        buffer_info.offset = 0;
-        buffer_info.range = sizeof(uniform_buffer_object);
-
-        VkDescriptorImageInfo image_info{};
-        image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        image_info.imageView = view;
-        image_info.sampler = texture_sampler;
-
-        VkWriteDescriptorSet descriptor_writes[2]{};
-        descriptor_writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptor_writes[0].dstSet = descriptor_sets[i];
-        descriptor_writes[0].dstBinding = 0;
-        descriptor_writes[0].dstArrayElement = 0;
-        descriptor_writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptor_writes[0].descriptorCount = 1;
-        descriptor_writes[0].pBufferInfo = &buffer_info;
-
-        descriptor_writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptor_writes[1].dstSet = descriptor_sets[i];
-        descriptor_writes[1].dstBinding = 1;
-        descriptor_writes[1].dstArrayElement = 0;
-        descriptor_writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        descriptor_writes[1].descriptorCount = 1;
-        descriptor_writes[1].pImageInfo = &image_info;
-
-        vkUpdateDescriptorSets(ctx->device, sizeof descriptor_writes / sizeof *descriptor_writes, descriptor_writes, 0, nullptr);
-    }
 }
 
-void vk::renderer::deleted() {
-    graphics_pipeline = VK_NULL_HANDLE;
-
-#ifdef ENABLE_VALIDATION_LAYERS
-    descriptor_pool = VK_NULL_HANDLE;
-    descriptor_set_layout = VK_NULL_HANDLE;
-    pipeline_layout = VK_NULL_HANDLE;
-    texture_sampler = VK_NULL_HANDLE;
-    uniform_buffers.clear();
-    uniform_buffers_memory.clear();
-#endif
+bool vk::pipeline::bound() const {
+    return ctx->bound_pipeline == graphics_pipeline;
 }
 
-void vk::renderer::draw(VkCommandBuffer command_buffer, const vk::model& m) {
-    if (!bound()) {
-        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
-        ctx->bound_pipeline = graphics_pipeline;
-    }
-
-    m.verts.bind(command_buffer);
-    vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &m.descriptor_sets[ctx->current_frame], 0, nullptr);
-    vkCmdDrawIndexed(command_buffer, u32(m.verts.index_count), 1, 0, 0, 0);
-}
-
-
-/// ======================================================================
-///  INTERNAL
-/// ======================================================================
-
-void vk::renderer::create_texture_sampler() {
-    VkPhysicalDeviceProperties properties;
-    vkGetPhysicalDeviceProperties(ctx->physical_device, &properties);
-
-    VkSamplerCreateInfo sampler_info{};
-    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    sampler_info.magFilter = VK_FILTER_LINEAR;
-    sampler_info.minFilter = VK_FILTER_LINEAR;
-    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.anisotropyEnable = VK_TRUE;
-    sampler_info.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
-    sampler_info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-    sampler_info.unnormalizedCoordinates = VK_FALSE;
-    sampler_info.compareEnable = VK_FALSE;
-    sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
-    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    sampler_info.mipLodBias = 0.0f;
-    sampler_info.minLod = 0.0f;
-    sampler_info.maxLod = VK_LOD_CLAMP_NONE;
-    assert_success(vkCreateSampler(ctx->device, &sampler_info, nullptr, &texture_sampler), "failed to create texture sampler");
-}
-
-void vk::renderer::create_descriptor_set_layout(const std::vector<VkDescriptorSetLayoutBinding>& descriptor_set_layout_bindings) {
+void vk::pipeline::create_descriptor_set_layout(const std::vector<VkDescriptorSetLayoutBinding>& descriptor_set_layout_bindings) {
     VkDescriptorSetLayoutCreateInfo create_info{};
     create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     create_info.bindingCount = u32(descriptor_set_layout_bindings.size());
@@ -157,7 +85,7 @@ void vk::renderer::create_descriptor_set_layout(const std::vector<VkDescriptorSe
     assert_success(vkCreateDescriptorSetLayout(ctx->device, &create_info, nullptr, &descriptor_set_layout), "failed to create descriptor set layout");
 }
 
-void vk::renderer::create_uniform_buffers() {
+void vk::pipeline::create_uniform_buffers() {
     auto buffer_size = sizeof(uniform_buffer_object);
     uniform_buffers.resize(MAX_FRAMES_IN_FLIGHT);
     uniform_buffers_memory.resize(MAX_FRAMES_IN_FLIGHT);
@@ -168,8 +96,8 @@ void vk::renderer::create_uniform_buffers() {
     }
 }
 
-void vk::renderer::create_descriptor_pool(const std::vector<VkDescriptorSetLayoutBinding>& descriptor_set_layout_bindings) {
-    std::vector<VkDescriptorPoolSize> pool_sizes{descriptor_set_layout_bindings.size()};
+void vk::pipeline::create_descriptor_pool(const std::vector<VkDescriptorSetLayoutBinding>& descriptor_set_layout_bindings) {
+    std::vector<VkDescriptorPoolSize> pool_sizes{ descriptor_set_layout_bindings.size() };
     for (u64 i = 0; i < descriptor_set_layout_bindings.size(); ++i) {
         pool_sizes[i].type = descriptor_set_layout_bindings[i].descriptorType;
         pool_sizes[i].descriptorCount = MAX_FRAMES_IN_FLIGHT;
@@ -183,7 +111,7 @@ void vk::renderer::create_descriptor_pool(const std::vector<VkDescriptorSetLayou
     assert_success(vkCreateDescriptorPool(ctx->device, &pool_info, nullptr, &descriptor_pool), "failed to create descriptor pool");
 }
 
-void vk::renderer::create_graphics_pipeline(std::string_view vert_path, std::string_view frag_path) {
+void vk::pipeline::create_graphics_pipeline(std::string_view vert_path, std::string_view frag_path) {
     /// Create the shader modules.
     auto vert_shader_module = create_shader_module(map_file(vert_path));
     auto frag_shader_module = create_shader_module(map_file(frag_path));
@@ -306,7 +234,7 @@ void vk::renderer::create_graphics_pipeline(std::string_view vert_path, std::str
         "failed to create graphics pipeline");
 }
 
-auto vk::renderer::create_shader_module(const std::vector<char>& code) -> VkShaderModule {
+auto vk::pipeline::create_shader_module(const std::vector<char>& code) -> VkShaderModule {
     VkShaderModuleCreateInfo create_info{};
     create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     create_info.codeSize = code.size();
@@ -315,4 +243,110 @@ auto vk::renderer::create_shader_module(const std::vector<char>& code) -> VkShad
     VkShaderModule shader_module;
     assert_success(vkCreateShaderModule(ctx->device, &create_info, nullptr, &shader_module), "failed to create shader module");
     return shader_module;
+}
+
+/// ======================================================================
+///  Texture renderer
+/// ======================================================================
+vk::texture_renderer::texture_renderer(PIPELINE_CTOR_ARGS)
+    : pipeline(PIPELINE_CTOR_PARAMS, [] -> std::vector<VkDescriptorSetLayoutBinding> {
+          VkDescriptorSetLayoutBinding ubo_layout_binding{};
+          ubo_layout_binding.binding = 0;
+          ubo_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+          ubo_layout_binding.descriptorCount = 1; /// Dimension.
+          ubo_layout_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+          VkDescriptorSetLayoutBinding sampler_layout_binding{};
+          sampler_layout_binding.binding = 1;
+          sampler_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+          sampler_layout_binding.descriptorCount = 1; /// Dimension.
+          sampler_layout_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+          return { ubo_layout_binding, sampler_layout_binding };
+      }()) {
+    create_texture_sampler();
+}
+
+vk::texture_renderer::texture_renderer(texture_renderer&& other) noexcept : pipeline(std::move(other)) {
+    texture_sampler = other.texture_sampler;
+}
+
+auto vk::texture_renderer::operator=(texture_renderer&& other) noexcept -> texture_renderer& {
+    MOVE_PIPELINE(other);
+
+    texture_sampler = other.texture_sampler;
+    return *this;
+}
+
+vk::texture_renderer::~texture_renderer() {
+    if (graphics_pipeline != VK_NULL_HANDLE) vkDestroySampler(ctx->device, texture_sampler, nullptr);
+}
+
+void vk::texture_renderer::create_descriptor_sets(std::vector<VkDescriptorSet>& descriptor_sets, VkImageView view) {
+    allocate_descriptor_sets(descriptor_sets);
+
+    for (u64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        VkDescriptorBufferInfo buffer_info{};
+        buffer_info.buffer = uniform_buffers[i];
+        buffer_info.offset = 0;
+        buffer_info.range = sizeof(uniform_buffer_object);
+
+        VkDescriptorImageInfo image_info{};
+        image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        image_info.imageView = view;
+        image_info.sampler = texture_sampler;
+
+        VkWriteDescriptorSet descriptor_writes[2]{};
+        descriptor_writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptor_writes[0].dstSet = descriptor_sets[i];
+        descriptor_writes[0].dstBinding = 0;
+        descriptor_writes[0].dstArrayElement = 0;
+        descriptor_writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptor_writes[0].descriptorCount = 1;
+        descriptor_writes[0].pBufferInfo = &buffer_info;
+
+        descriptor_writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptor_writes[1].dstSet = descriptor_sets[i];
+        descriptor_writes[1].dstBinding = 1;
+        descriptor_writes[1].dstArrayElement = 0;
+        descriptor_writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptor_writes[1].descriptorCount = 1;
+        descriptor_writes[1].pImageInfo = &image_info;
+
+        vkUpdateDescriptorSets(ctx->device, sizeof descriptor_writes / sizeof *descriptor_writes, descriptor_writes, 0, nullptr);
+    }
+}
+
+void vk::texture_renderer::draw(VkCommandBuffer command_buffer, const vk::texture_model& m) {
+    if (!bound()) {
+        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
+        ctx->bound_pipeline = graphics_pipeline;
+    }
+
+    m.verts.bind(command_buffer);
+    vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &m.descriptor_sets[ctx->current_frame], 0, nullptr);
+    vkCmdDrawIndexed(command_buffer, u32(m.verts.index_count), 1, 0, 0, 0);
+}
+
+void vk::texture_renderer::create_texture_sampler() {
+    VkPhysicalDeviceProperties properties;
+    vkGetPhysicalDeviceProperties(ctx->physical_device, &properties);
+
+    VkSamplerCreateInfo sampler_info{};
+    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler_info.magFilter = VK_FILTER_LINEAR;
+    sampler_info.minFilter = VK_FILTER_LINEAR;
+    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.anisotropyEnable = VK_TRUE;
+    sampler_info.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+    sampler_info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    sampler_info.unnormalizedCoordinates = VK_FALSE;
+    sampler_info.compareEnable = VK_FALSE;
+    sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
+    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler_info.mipLodBias = 0.0f;
+    sampler_info.minLod = 0.0f;
+    sampler_info.maxLod = VK_LOD_CLAMP_NONE;
+    assert_success(vkCreateSampler(ctx->device, &sampler_info, nullptr, &texture_sampler), "failed to create texture sampler");
 }
