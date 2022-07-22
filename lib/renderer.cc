@@ -25,6 +25,16 @@
         other.graphics_pipeline = VK_NULL_HANDLE;                         \
     } while (0)
 
+#define DEFAULT_CTORS(renderer)                                                       \
+    vk::renderer::renderer(renderer&& other) noexcept : pipeline(std::move(other)) {} \
+                                                                                      \
+    auto vk::renderer::operator=(renderer&& other) noexcept -> renderer& {            \
+        MOVE_PIPELINE(other);                                                         \
+        return *this;                                                                 \
+    }                                                                                 \
+                                                                                      \
+    vk::renderer::~renderer() {}
+
 /// ======================================================================
 ///  Pipeline
 /// ======================================================================
@@ -349,4 +359,125 @@ void vk::texture_renderer::create_texture_sampler() {
     sampler_info.minLod = 0.0f;
     sampler_info.maxLod = VK_LOD_CLAMP_NONE;
     assert_success(vkCreateSampler(ctx->device, &sampler_info, nullptr, &texture_sampler), "failed to create texture sampler");
+}
+
+/// ======================================================================
+///  Geometric renderer
+/// ======================================================================
+DEFAULT_CTORS(geometric_renderer)
+
+vk::geometric_renderer::geometric_renderer(PIPELINE_CTOR_ARGS)
+    : pipeline(PIPELINE_CTOR_PARAMS, [] -> std::vector<VkDescriptorSetLayoutBinding> {
+          VkDescriptorSetLayoutBinding ubo_layout_binding{};
+          ubo_layout_binding.binding = 0;
+          ubo_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+          ubo_layout_binding.descriptorCount = 1; /// Dimension.
+          ubo_layout_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+          return { ubo_layout_binding };
+      }()) {
+    allocate_descriptor_sets(descriptor_sets);
+
+    for (u64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+        VkDescriptorBufferInfo buffer_info{};
+        buffer_info.buffer = uniform_buffers[i];
+        buffer_info.offset = 0;
+        buffer_info.range = sizeof(uniform_buffer_object);
+
+        VkWriteDescriptorSet descriptor_write{};
+        descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptor_write.dstSet = descriptor_sets[i];
+        descriptor_write.dstBinding = 0;
+        descriptor_write.dstArrayElement = 0;
+        descriptor_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptor_write.descriptorCount = 1;
+        descriptor_write.pBufferInfo = &buffer_info;
+
+        vkUpdateDescriptorSets(ctx->device, 1, &descriptor_write, 0, nullptr);
+    }
+}
+
+auto vk::geometric_renderer::build_geometry() -> geometry_builder {
+    return geometry_builder{ this };
+}
+
+void vk::geometric_renderer::draw(VkCommandBuffer command_buffer, const vk::geometry& g) {
+    if (!bound()) {
+        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
+        ctx->bound_pipeline = graphics_pipeline;
+    }
+
+    g.verts.bind(command_buffer);
+    vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &descriptor_sets[ctx->current_frame], 0, nullptr);
+    vkCmdDrawIndexed(command_buffer, u32(g.verts.index_count), 1, 0, 0, 0);
+}
+
+/// ======================================================================
+///  Geometry builder
+/// ======================================================================
+
+u32 vk::geometric_renderer::geometry_builder::add(const vertex& v) {
+    if (unique_verts.count(v) == 0) {
+        u32 idx = u32(verts.size());
+        unique_verts[v] = idx;
+        verts.push_back(v);
+        return idx;
+    }
+
+    return unique_verts[v];
+}
+
+auto vk::geometric_renderer::geometry_builder::rect(glm::vec2 a, glm::vec2 b, glm::vec3 colour) -> geometry_builder& {
+    ///
+    /// Determine the corners of the rectangle such that rect_verts[0..3] are in anticlockwise order.
+    ///
+    vertex rect_verts[4]{};
+    rect_verts[0].pos = glm::vec3(a, 0.0f);
+    rect_verts[2].pos = glm::vec3(b, 0.0f);
+
+    glm::vec2 v = b - a;
+
+    /// a         /// a
+    ///           ///
+    ///        b  ///        b
+    if ((v.x > 0 && v.y > 0) || (v.x < 0 && v.y < 0)) {
+        rect_verts[1].pos = glm::vec3(a.x, a.y + v.y, 0.0f);
+        rect_verts[3].pos = glm::vec3(a.x + v.x, a.y, 0.0f);
+    }
+
+    ///        b  ///        a
+    ///           ///
+    /// a         /// b
+    else if ((v.x > 0 && v.y < 0) || (v.x < 0 && v.y > 0)) {
+        rect_verts[1].pos = glm::vec3(a.x + v.x, a.y, 0.0f);
+        rect_verts[3].pos = glm::vec3(a.x, a.y + v.y, 0.0f);
+    }
+
+    /// a       b
+    else {
+        rect_verts[1].pos = rect_verts[2].pos;
+        rect_verts[3].pos = rect_verts[0].pos;
+    }
+
+    ///
+    /// Generate the rectangle.
+    ///
+    u32 rect_indices[4];
+
+    for (u64 i = 0; i < sizeof rect_verts / sizeof *rect_verts; ++i) {
+        rect_verts[i].colour = colour;
+        rect_indices[i] = add(rect_verts[i]);
+    }
+
+    indices.push_back(rect_indices[0]);
+    indices.push_back(rect_indices[1]);
+    indices.push_back(rect_indices[2]);
+    indices.push_back(rect_indices[2]);
+    indices.push_back(rect_indices[3]);
+    indices.push_back(rect_indices[0]);
+
+    return *this;
+}
+
+vk::geometric_renderer::geometry_builder::operator geometry() const {
+    return { .verts = vertex_buffer(r->ctx, verts, indices) };
 }

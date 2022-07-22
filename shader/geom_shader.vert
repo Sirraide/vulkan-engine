@@ -13,6 +13,6 @@ layout (binding = 0) uniform uniform_buffer_object {
 } ubo;
 
 void main() {
-    gl_Position = ubo.proj * ubo.view * ubo.model * vec4(in_position, 1.0);
+    gl_Position = vec4(in_position, 1.0);
     frag_colour = in_colour;
 }

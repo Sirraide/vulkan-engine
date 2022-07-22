@@ -18,6 +18,12 @@ namespace vk {
 
 struct context;
 
+/// Data that can be used by a geometric renderer.
+struct geometry {
+    /// Vertices.
+    vertex_buffer verts;
+};
+
 /// Base renderer pipeline.
 struct pipeline {
     context* ctx;
@@ -73,6 +79,40 @@ struct texture_renderer : pipeline {
 
 /// Renderer for models consisting entirely of vertices with colours and no texture.
 struct geometric_renderer : pipeline {
+    /// Helper struct to build a geometry.
+    struct geometry_builder {
+        geometric_renderer* r;
+
+        /// Vertex data.
+        std::unordered_map<vertex, u32> unique_verts;
+        std::vector<vertex> verts;
+        std::vector<u32> indices;
+
+        /// Add a vertex and return its index.
+        u32 add(const vertex& v);
+
+        /// Draw a filled rect between a and b.
+        auto rect(glm::vec2 a, glm::vec2 b, glm::vec3 colour = {1.f, 1.f, 1.f}) -> geometry_builder&;
+
+        /// Get a geometry from this builder.
+        operator geometry() const;
+
+        /// These are not really meant to be used directly.
+        geometry_builder(geometric_renderer* r) : r(r) {}
+        nocopy(geometry_builder);
+        nomove(geometry_builder);
+        ~geometry_builder() {}
+    };
+    /// Descriptor sets.
+    std::vector<VkDescriptorSet> descriptor_sets;
+
+    RENDERER_CTORS(geometric_renderer);
+
+    /// Return a builder for a geometry.
+    auto build_geometry() -> geometry_builder;
+
+    /// Draw a model.
+    void draw(VkCommandBuffer command_buffer, const geometry& m);
 };
 
 } // namespace vk

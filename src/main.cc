@@ -3,11 +3,12 @@
 #include "../lib/model.hh"
 #include "../lib/renderer.hh"
 #include "../lib/vertex.hh"
+
 #include <chrono>
 
 using namespace command_line_options;
 using options = clopts< // clang-format off
-    positional<"filename", "The image to load.">
+    positional<"filename", "The image to load.", std::string, false>
 >; // clang-format on
 
 int main(int argc, char** argv) {
@@ -17,13 +18,14 @@ int main(int argc, char** argv) {
     vk::texture_renderer renderer(&ctx, "out/tex_shader_vert.spv", "out/tex_shader_frag.spv");
     vk::texture_model room_model(&renderer, "assets/viking_room.png", "assets/viking_room.obj");
 
-/*    VkDescriptorSetLayoutBinding ubo_layout_binding_geom{};
-    ubo_layout_binding.binding = 0;
-    ubo_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    ubo_layout_binding.descriptorCount = 1; /// Dimension.
-    ubo_layout_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    vk::geometric_renderer geom_renderer(&ctx, "out/geom_shader_vert.spv", "out/geom_shader_frag.spv", { ubo_layout_binding_geom });
-    vk::geometric_model teapot(&geom_renderer, "assets/teapot.obj");*/
+    vk::geometric_renderer geom_renderer(&ctx, "out/geom_shader_vert.spv", "out/geom_shader_frag.spv");
+    vk::geometry rects[5] = {
+        geom_renderer.build_geometry().rect({ -.9f, -.9f }, { -.8f, -.8f }),
+        geom_renderer.build_geometry().rect({ -.9f, -.7f }, { -.8f, -.6f }),
+        geom_renderer.build_geometry().rect({ -.9f, -.5f }, { -.8f, -.4f }),
+        geom_renderer.build_geometry().rect({ -.9f, -.3f }, { -.8f, -.2f }),
+        geom_renderer.build_geometry().rect({ -.9f, -.1f }, { -.8f, -0.f }),
+    };
 
     ctx.run_forever([&](VkCommandBuffer command_buffer) {
         /// Update uniforms.
@@ -42,6 +44,8 @@ int main(int argc, char** argv) {
         memcpy(data, &ubo, sizeof(ubo));
         vkUnmapMemory(ctx.device, renderer.uniform_buffers_memory[ctx.current_frame]);
 
+        u64 rect_idx = u64(time * 2) % (sizeof rects / sizeof *rects);
+        geom_renderer.draw(command_buffer, rects[rect_idx]);
         renderer.draw(command_buffer, room_model);
     });
 }
