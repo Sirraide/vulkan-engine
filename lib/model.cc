@@ -42,22 +42,38 @@ void vk::model::load_model(std::string_view obj_path) {
         for (auto& index : shape.mesh.indices) {
             vertex v{};
 
-            v.pos = {
-                attrib.vertices[3 * size_t(index.vertex_index) + 0],
-                attrib.vertices[3 * size_t(index.vertex_index) + 1],
-                attrib.vertices[3 * size_t(index.vertex_index) + 2],
-            };
+            if (index.vertex_index >= 0) {
+                v.pos = {
+                    attrib.vertices[3 * size_t(index.vertex_index) + 0],
+                    attrib.vertices[3 * size_t(index.vertex_index) + 1],
+                    attrib.vertices[3 * size_t(index.vertex_index) + 2],
+                };
 
-            v.tex_coord = {
-                attrib.texcoords[2 * size_t(index.texcoord_index) + 0],
+                v.colour = {
+                    attrib.colors[3 * size_t(index.vertex_index) + 0],
+                    attrib.colors[3 * size_t(index.vertex_index) + 1],
+                    attrib.colors[3 * size_t(index.vertex_index) + 2],
+                };
+            }
 
-                /// In the .obj format, a vertical coordinate of `0` indicates the bottom
-                /// of the image, whereas in Vulkan `0` is the top of the image. We therefore
-                /// need to invert this.
-                1.0f - attrib.texcoords[2 * size_t(index.texcoord_index) + 1],
-            };
+            if (index.normal_index >= 0) {
+                v.normal = {
+                    attrib.normals[3 * size_t(index.normal_index) + 0],
+                    attrib.normals[3 * size_t(index.normal_index) + 1],
+                    attrib.normals[3 * size_t(index.normal_index) + 2],
+                };
+            }
 
-            v.colour = { 1.0f, 1.0f, 1.0f };
+            if (index.texcoord_index >= 0) {
+                v.tex_coord = {
+                    attrib.texcoords[2 * size_t(index.texcoord_index) + 0],
+
+                    /// In the .obj format, a vertical coordinate of `0` indicates the bottom
+                    /// of the image, whereas in Vulkan `0` is the top of the image. We therefore
+                    /// need to invert this.
+                    1.0f - attrib.texcoords[2 * size_t(index.texcoord_index) + 1],
+                };
+            }
 
             /// New vertex.
             if (unique_vertices.count(v) == 0) {

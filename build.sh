@@ -41,7 +41,7 @@ cd out || die "cd error"
 cmake -DCMAKE_BUILD_TYPE="$build_type" .. -GNinja
 if test "$cmake_only" = "YES"; then exit 0; fi
 
-glslc ../shader/shader.vert -o vert.spv
-glslc ../shader/shader.frag -o frag.spv
+glslc ../shader/tex_shader.vert -o tex_vert.spv
+glslc ../shader/tex_shader.frag -o tex_frag.spv
 
 ninja
