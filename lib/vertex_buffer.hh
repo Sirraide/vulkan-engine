@@ -32,7 +32,7 @@ struct vertex_buffer {
     nocopy(vertex_buffer);
 
     /// Draw the contents of the vertex buffer.
-    void bind(VkCommandBuffer command_buffer);
+    void bind(VkCommandBuffer command_buffer) const;
 };
 
 }

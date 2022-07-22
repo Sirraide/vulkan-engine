@@ -11,6 +11,8 @@
 #include <optional>
 #include <vulkan/vulkan.h>
 
+#define MAX_FRAMES_IN_FLIGHT 2
+
 namespace vk {
 struct queue_family_indices {
     std::optional<u32> graphics_family;
@@ -36,8 +38,6 @@ struct context {
     VkDevice device;
     VkInstance instance;
     VkPhysicalDevice physical_device;
-    VkPipeline graphics_pipeline;
-    VkPipelineLayout pipeline_layout;
     VkRenderPass render_pass;
     VkSurfaceKHR surface;
 
@@ -58,14 +58,10 @@ struct context {
     std::vector<VkSemaphore> image_available_semaphores;
     std::vector<VkSemaphore> render_finished_semaphores;
     std::vector<VkFence> in_flight_fences;
-    std::vector<VkBuffer> uniform_buffers;
-    std::vector<VkDeviceMemory> uniform_buffers_memory;
     u32 current_frame = 0;
 
-    /// Uniforms.
-    VkDescriptorPool descriptor_pool;
-    VkDescriptorSetLayout descriptor_set_layout;
-    VkSampler texture_sampler;
+    /// The pipeline that is currently bound.
+    VkPipeline bound_pipeline;
 
     /// Depth buffer.
     VkImage depth_image;
@@ -82,15 +78,12 @@ struct context {
     GLFWwindow* window;
     bool resized = false;
 
-    /// Miscellaneous.
-    std::string filename;
-
 #ifdef ENABLE_VALIDATION_LAYERS
     VkDebugUtilsMessengerEXT debug_messenger;
 #endif
 
     /// Create a new context and initialise Vulkan.
-    context(int wd, int ht, std::string_view title, std::string_view filename);
+    context(int wd, int ht, std::string_view title);
 
     /// Destroy the context and cleanup Vulkan if there are no contexts left.
     ~context();
@@ -98,6 +91,9 @@ struct context {
     /// We don't want to copy or move contexts.
     nocopy(context);
     nomove(context);
+
+    /// Bind a renderer to this context.
+    void bind(renderer& r);
 
     /// Poll window events.
     void poll();
@@ -114,16 +110,10 @@ struct context {
     void create_swap_chain();
     void create_image_views();
     void create_render_pass();
-    void create_descriptor_set_layout();
-    void create_graphics_pipeline();
     void create_framebuffers();
     void create_command_pool();
     void create_colour_resources();
     void create_depth_resources();
-    void create_texture_sampler();
-    void create_uniform_buffers();
-    void create_descriptor_pool();
-    void create_descriptor_sets(std::vector<VkDescriptorSet>& descriptor_sets, VkImageView view);
     void create_command_buffers();
     void create_sync_objects();
 
@@ -138,7 +128,6 @@ struct context {
         VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image,
         VkDeviceMemory& image_memory);
     auto create_image_view(VkImage image, VkFormat format, VkImageAspectFlags aspect_flags, u32 mip_lvls) -> VkImageView;
-    auto create_shader_module(const std::vector<char>& code) -> VkShaderModule;
     void draw_frame(const render_callback& tick);
     void end_single_time_commands(VkCommandBuffer command_buffer);
     auto find_depth_format() -> VkFormat;
@@ -149,7 +138,8 @@ struct context {
     void generate_mipmaps(VkImage image, VkFormat image_format, u32 wd, u32 ht, u32 mip_levels);
     auto phys_dev_score(VkPhysicalDevice dev) -> u64;
     auto query_swap_chain_support(VkPhysicalDevice device) -> swap_chain_support_details;
-    void record_command_buffer(const render_callback& tick, VkCommandBuffer command_buffer, u32 img_index);
+    void begin_recording_command_buffer(VkCommandBuffer command_buffer, u32 img_index);
+    void end_recording_command_buffer(VkCommandBuffer command_buffer);
     void recreate_swap_chain();
     void transition_image_layout(VkImage image, VkFormat format, VkImageLayout old_layout,
         VkImageLayout new_layout, u32 mip_lvls);

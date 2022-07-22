@@ -104,7 +104,7 @@ vk::vertex_buffer::~vertex_buffer() {
     }
 }
 
-void vk::vertex_buffer::bind(VkCommandBuffer command_buffer) {
+void vk::vertex_buffer::bind(VkCommandBuffer command_buffer) const {
     vkCmdBindVertexBuffers(command_buffer, 0, 1, &vk_vertbuf, &offsets);
     vkCmdBindIndexBuffer(command_buffer, vk_idxbuf, 0, VK_INDEX_TYPE_UINT32);
 }

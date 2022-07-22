@@ -8,20 +8,13 @@
 #include "vertex.hh"
 
 #include <algorithm>
-#include <chrono>
-#include <fcntl.h>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <map>
 #include <set>
 #include <stb/stb_image.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
-#define MAX_FRAMES_IN_FLIGHT 2
-#define MODEL_PATH           "assets/viking_room.obj"
-#define TEXTURE_PATH         "assets/viking_room.png"
 
 using namespace vk;
 defer_type_operator_lhs defer_type_operator_lhs::instance;
@@ -81,30 +74,6 @@ VkExtent2D choose_swap_extent(const VkSurfaceCapabilitiesKHR& capabilities, GLFW
     return actual_extent;
 }
 
-inline std::vector<char> map_file(const char* filename) {
-    int fd = ::open(filename, O_RDONLY);
-    if (fd < 0) [[unlikely]]
-        die("open(\"{}\") failed: {}", filename, ::strerror(errno));
-
-    struct stat s {};
-    if (::fstat(fd, &s)) [[unlikely]]
-        die("fstat(\"{}\") failed: {}", filename, ::strerror(errno));
-    auto sz = size_t(s.st_size);
-    if (sz == 0) [[unlikely]]
-        return {};
-
-    auto* mem = (char*) ::mmap(nullptr, sz, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
-    if (mem == MAP_FAILED) [[unlikely]]
-        die("mmap(\"{}\", {}) failed: {}", filename, sz, ::strerror(errno));
-    ::close(fd);
-
-    std::vector<char> bytes(sz);
-    std::memcpy(bytes.data(), mem, sz);
-    if (::munmap(mem, sz)) [[unlikely]]
-        die("munmap(\"{}\", {}) failed: {}", filename, sz, ::strerror(errno));
-    return bytes;
-}
-
 VkSampleCountFlagBits phys_max_usable_sample_count(VkPhysicalDevice dev) {
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(dev, &props);
@@ -119,7 +88,6 @@ VkSampleCountFlagBits phys_max_usable_sample_count(VkPhysicalDevice dev) {
     if (counts & VK_SAMPLE_COUNT_1_BIT) return VK_SAMPLE_COUNT_1_BIT;
     return VK_SAMPLE_COUNT_1_BIT;
 }
-
 
 #ifdef ENABLE_VALIDATION_LAYERS
 /// Handle Vulkan errors.
@@ -164,21 +132,7 @@ void vulkan_fini() {
 /// ======================================================================
 vk::context::~context() {
     cleanup_swap_chain();
-
-    vkDestroyPipeline(device, graphics_pipeline, nullptr);
-    vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
     vkDestroyRenderPass(device, render_pass, nullptr);
-
-    for (u64 i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        vkDestroyBuffer(device, uniform_buffers[i], nullptr);
-        vkFreeMemory(device, uniform_buffers_memory[i], nullptr);
-    }
-
-    vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
-
-    vkDestroySampler(device, texture_sampler, nullptr);
-
-    vkDestroyDescriptorSetLayout(device, descriptor_set_layout, nullptr);
 
     for (u64 i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroySemaphore(device, render_finished_semaphores[i], nullptr);
@@ -206,7 +160,7 @@ vk::context::~context() {
     if (context_count == 0) vulkan_fini();
 }
 
-vk::context::context(int wd, int ht, std::string_view title, std::string_view filename) : filename(filename) {
+vk::context::context(int wd, int ht, std::string_view title) {
     if (context_count == 0) vulkan_init();
     context_count++;
 
@@ -221,7 +175,7 @@ vk::context::context(int wd, int ht, std::string_view title, std::string_view fi
     /// Tell GLFW to notify us when the window is resized.
     glfwSetWindowUserPointer(window, this);
     glfwSetFramebufferSizeCallback(window, [](GLFWwindow* w, int, int) {
-        auto* ctx = (vk::context *) glfwGetWindowUserPointer(w);
+        auto* ctx = (vk::context*) glfwGetWindowUserPointer(w);
         ctx->resized = true;
     });
 
@@ -312,7 +266,6 @@ vk::context::context(int wd, int ht, std::string_view title, std::string_view fi
     create_logical_device();
     create_command_pool();
     create_command_buffers();
-    create_sync_objects();
 
     /// Swap chain
     create_swap_chain();
@@ -321,13 +274,7 @@ vk::context::context(int wd, int ht, std::string_view title, std::string_view fi
     create_colour_resources();
     create_depth_resources();
     create_framebuffers();
-
-    /// Pipeline
-    create_texture_sampler();
-    create_descriptor_set_layout();
-    create_uniform_buffers();
-    create_descriptor_pool();
-    create_graphics_pipeline();
+    create_sync_objects();
 }
 
 void vk::context::pick_physical_device() {
@@ -529,163 +476,6 @@ void vk::context::create_render_pass() {
     assert_success(vkCreateRenderPass(device, &create_info_render_pass, nullptr, &render_pass), "failed to create render pass");
 }
 
-void vk::context::create_descriptor_set_layout() {
-    VkDescriptorSetLayoutBinding ubo_layout_binding{};
-    ubo_layout_binding.binding = 0;
-    ubo_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    ubo_layout_binding.descriptorCount = 1; /// Dimension.
-    ubo_layout_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
-    VkDescriptorSetLayoutBinding sampler_layout_binding{};
-    sampler_layout_binding.binding = 1;
-    sampler_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    sampler_layout_binding.descriptorCount = 1; /// Dimension.
-    sampler_layout_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    VkDescriptorSetLayoutBinding bindings[] = { ubo_layout_binding, sampler_layout_binding };
-    VkDescriptorSetLayoutCreateInfo create_info{};
-    create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    create_info.bindingCount = sizeof bindings / sizeof *bindings;
-    create_info.pBindings = bindings;
-    assert_success(vkCreateDescriptorSetLayout(device, &create_info, nullptr, &descriptor_set_layout), "failed to create descriptor set layout");
-}
-
-void vk::context::create_graphics_pipeline() {
-    /// Create the shader modules.
-    auto vert_shader_module = create_shader_module(map_file("out/vert.spv"));
-    auto frag_shader_module = create_shader_module(map_file("out/frag.spv"));
-    defer {
-        vkDestroyShaderModule(device, vert_shader_module, nullptr);
-        vkDestroyShaderModule(device, frag_shader_module, nullptr);
-    };
-
-    /// Assign the shaders to their corresponding stages.
-    VkPipelineShaderStageCreateInfo vert_shader_stage_info{};
-    vert_shader_stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vert_shader_stage_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
-    vert_shader_stage_info.module = vert_shader_module;
-    vert_shader_stage_info.pName = "main";
-
-    VkPipelineShaderStageCreateInfo frag_shader_stage_info{};
-    frag_shader_stage_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    frag_shader_stage_info.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    frag_shader_stage_info.module = frag_shader_module;
-    frag_shader_stage_info.pName = "main";
-
-    /// Store them for later.
-    VkPipelineShaderStageCreateInfo shader_stages[] = { vert_shader_stage_info, frag_shader_stage_info };
-
-    /// Dynamic state.
-    std::vector<VkDynamicState> dynamic_states = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
-    VkPipelineDynamicStateCreateInfo dynamic_state_info{};
-    dynamic_state_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dynamic_state_info.dynamicStateCount = u32(dynamic_states.size());
-    dynamic_state_info.pDynamicStates = dynamic_states.data();
-
-    /// Vertex input.
-    auto binding_description = vertex::binding_description();
-    auto attribute_descriptions = vertex::attribute_descriptions();
-
-    VkPipelineVertexInputStateCreateInfo vertex_input_info{};
-    vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertex_input_info.vertexBindingDescriptionCount = 1;
-    vertex_input_info.pVertexBindingDescriptions = &binding_description;
-    vertex_input_info.vertexAttributeDescriptionCount = u32(attribute_descriptions.size());
-    vertex_input_info.pVertexAttributeDescriptions = attribute_descriptions.data();
-
-    /// Input assembly.
-    VkPipelineInputAssemblyStateCreateInfo input_assembly_info{};
-    input_assembly_info.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    input_assembly_info.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    input_assembly_info.primitiveRestartEnable = VK_FALSE;
-
-    /// Viewport and scissor.
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = f32(swap_chain_extent.width);
-    viewport.height = f32(swap_chain_extent.height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-
-    VkRect2D scissor{};
-    scissor.offset = { 0, 0 };
-    scissor.extent = swap_chain_extent;
-
-    VkPipelineViewportStateCreateInfo viewport_state_info{};
-    viewport_state_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewport_state_info.viewportCount = 1;
-    viewport_state_info.scissorCount = 1;
-
-    /// Rasteriser.
-    VkPipelineRasterizationStateCreateInfo rasteriser_info{};
-    rasteriser_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasteriser_info.depthClampEnable = VK_FALSE;
-    rasteriser_info.rasterizerDiscardEnable = VK_FALSE;
-    rasteriser_info.polygonMode = VK_POLYGON_MODE_FILL;
-    rasteriser_info.lineWidth = 1.0f;
-    rasteriser_info.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasteriser_info.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rasteriser_info.depthBiasEnable = VK_FALSE;
-
-    /// Multisampling.
-    VkPipelineMultisampleStateCreateInfo multisampling_info{};
-    multisampling_info.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling_info.sampleShadingEnable = VK_TRUE;
-    multisampling_info.rasterizationSamples = msaa_samples;
-    multisampling_info.minSampleShading = .2f;
-
-    /// Colour blending.
-    VkPipelineColorBlendAttachmentState colour_blend_attachment{};
-    colour_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
-                                             | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    colour_blend_attachment.blendEnable = VK_FALSE;
-
-    VkPipelineColorBlendStateCreateInfo colour_blend_info{};
-    colour_blend_info.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    colour_blend_info.logicOpEnable = VK_FALSE;
-    colour_blend_info.logicOp = VK_LOGIC_OP_COPY;
-    colour_blend_info.attachmentCount = 1;
-    colour_blend_info.pAttachments = &colour_blend_attachment;
-
-    /// Depth stencil.
-    VkPipelineDepthStencilStateCreateInfo depth_stencil_info{};
-    depth_stencil_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depth_stencil_info.depthTestEnable = VK_TRUE;
-    depth_stencil_info.depthWriteEnable = VK_TRUE;
-    depth_stencil_info.depthCompareOp = VK_COMPARE_OP_LESS; /// Lower depth = closer.
-    depth_stencil_info.depthBoundsTestEnable = VK_FALSE;
-    depth_stencil_info.stencilTestEnable = VK_FALSE;
-
-    /// Pipeline layout.
-    VkPipelineLayoutCreateInfo pipeline_layout_info{};
-    pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipeline_layout_info.setLayoutCount = 1;
-    pipeline_layout_info.pSetLayouts = &descriptor_set_layout;
-    assert_success(vkCreatePipelineLayout(device, &pipeline_layout_info, nullptr, &pipeline_layout), "failed to create pipeline layout");
-
-    /// Finally, create the pipeline.
-    VkGraphicsPipelineCreateInfo pipeline_info{};
-    pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipeline_info.stageCount = u32(sizeof shader_stages / sizeof *shader_stages);
-    pipeline_info.pStages = shader_stages;
-    pipeline_info.pVertexInputState = &vertex_input_info;
-    pipeline_info.pInputAssemblyState = &input_assembly_info;
-    pipeline_info.pViewportState = &viewport_state_info;
-    pipeline_info.pRasterizationState = &rasteriser_info;
-    pipeline_info.pMultisampleState = &multisampling_info;
-    pipeline_info.pDepthStencilState = &depth_stencil_info;
-    pipeline_info.pColorBlendState = &colour_blend_info;
-    pipeline_info.pDynamicState = &dynamic_state_info;
-    pipeline_info.layout = pipeline_layout;
-    pipeline_info.renderPass = render_pass;
-    pipeline_info.subpass = 0;
-    pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
-    pipeline_info.basePipelineIndex = -1;
-    assert_success(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &graphics_pipeline),
-        "failed to create graphics pipeline");
-}
-
 void vk::context::create_framebuffers() {
     swap_chain_framebuffers.resize(swap_chain_image_views.size());
     for (u64 i = 0; i < swap_chain_image_views.size(); ++i) {
@@ -726,99 +516,6 @@ void vk::context::create_depth_resources() {
         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         depth_image, depth_image_memory);
     depth_image_view = create_image_view(depth_image, depth_format, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
-}
-
-void vk::context::create_texture_sampler() {
-    VkPhysicalDeviceProperties properties;
-    vkGetPhysicalDeviceProperties(physical_device, &properties);
-
-    VkSamplerCreateInfo sampler_info{};
-    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    sampler_info.magFilter = VK_FILTER_LINEAR;
-    sampler_info.minFilter = VK_FILTER_LINEAR;
-    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.anisotropyEnable = VK_TRUE;
-    sampler_info.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
-    sampler_info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-    sampler_info.unnormalizedCoordinates = VK_FALSE;
-    sampler_info.compareEnable = VK_FALSE;
-    sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
-    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    sampler_info.mipLodBias = 0.0f;
-    sampler_info.minLod = 0.0f;
-    sampler_info.maxLod = VK_LOD_CLAMP_NONE;
-    assert_success(vkCreateSampler(device, &sampler_info, nullptr, &texture_sampler), "failed to create texture sampler");
-}
-
-void vk::context::create_uniform_buffers() {
-    auto buffer_size = sizeof(uniform_buffer_object);
-    uniform_buffers.resize(MAX_FRAMES_IN_FLIGHT);
-    uniform_buffers_memory.resize(MAX_FRAMES_IN_FLIGHT);
-
-    for (u64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-        create_buffer(buffer_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-            uniform_buffers[i], uniform_buffers_memory[i]);
-    }
-}
-
-void vk::context::create_descriptor_pool() {
-    VkDescriptorPoolSize pool_sizes[2]{};
-    pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    pool_sizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
-    pool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    pool_sizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT;
-
-    VkDescriptorPoolCreateInfo pool_info{};
-    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pool_info.poolSizeCount = sizeof pool_sizes / sizeof *pool_sizes;
-    pool_info.pPoolSizes = pool_sizes;
-    pool_info.maxSets = MAX_FRAMES_IN_FLIGHT;
-    assert_success(vkCreateDescriptorPool(device, &pool_info, nullptr, &descriptor_pool), "failed to create descriptor pool");
-}
-
-void vk::context::create_descriptor_sets(std::vector<VkDescriptorSet>& descriptor_sets, VkImageView view) {
-    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptor_set_layout);
-    VkDescriptorSetAllocateInfo alloc_info{};
-    alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    alloc_info.descriptorPool = descriptor_pool;
-    alloc_info.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
-    alloc_info.pSetLayouts = layouts.data();
-
-    descriptor_sets.resize(MAX_FRAMES_IN_FLIGHT);
-    assert_success(vkAllocateDescriptorSets(device, &alloc_info, descriptor_sets.data()), "failed to allocate descriptor sets");
-
-    for (u64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-        VkDescriptorBufferInfo buffer_info{};
-        buffer_info.buffer = uniform_buffers[i];
-        buffer_info.offset = 0;
-        buffer_info.range = sizeof(uniform_buffer_object);
-
-        VkDescriptorImageInfo image_info{};
-        image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        image_info.imageView = view;
-        image_info.sampler = texture_sampler;
-
-        VkWriteDescriptorSet descriptor_writes[2]{};
-        descriptor_writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptor_writes[0].dstSet = descriptor_sets[i];
-        descriptor_writes[0].dstBinding = 0;
-        descriptor_writes[0].dstArrayElement = 0;
-        descriptor_writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptor_writes[0].descriptorCount = 1;
-        descriptor_writes[0].pBufferInfo = &buffer_info;
-
-        descriptor_writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptor_writes[1].dstSet = descriptor_sets[i];
-        descriptor_writes[1].dstBinding = 1;
-        descriptor_writes[1].dstArrayElement = 0;
-        descriptor_writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        descriptor_writes[1].descriptorCount = 1;
-        descriptor_writes[1].pImageInfo = &image_info;
-
-        vkUpdateDescriptorSets(device, sizeof descriptor_writes / sizeof *descriptor_writes, descriptor_writes, 0, nullptr);
-    }
 }
 
 void vk::context::create_command_buffers() {
@@ -983,17 +680,6 @@ auto vk::context::create_image_view(VkImage image, VkFormat format, VkImageAspec
     return image_view;
 }
 
-auto vk::context::create_shader_module(const std::vector<char>& code) -> VkShaderModule {
-    VkShaderModuleCreateInfo create_info{};
-    create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    create_info.codeSize = code.size();
-    create_info.pCode = reinterpret_cast<const u32*>(code.data());
-
-    VkShaderModule shader_module;
-    assert_success(vkCreateShaderModule(device, &create_info, nullptr, &shader_module), "failed to create shader module");
-    return shader_module;
-}
-
 void vk::context::draw_frame(const render_callback& tick) {
     /// Wait for the previous frame to finish.
     vkWaitForFences(device, 1, &in_flight_fences[current_frame], VK_TRUE, UINT64_MAX);
@@ -1013,15 +699,14 @@ void vk::context::draw_frame(const render_callback& tick) {
 
     /// Record the command buffer.
     vkResetCommandBuffer(command_buffers[current_frame], 0);
-    record_command_buffer(tick, command_buffers[current_frame], image_index);
+    begin_recording_command_buffer(command_buffers[current_frame], image_index);
+    tick(command_buffers[current_frame]);
+    end_recording_command_buffer(command_buffers[current_frame]);
 
     /// Submit the command buffer.
     VkSemaphore wait_semaphores[] = { image_available_semaphores[current_frame] };
     VkSemaphore signal_semaphores[] = { render_finished_semaphores[current_frame] };
     VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-
-    /// We need to update the uniform buffer each frame before submitting.
-    update_uniform_buffer(current_frame);
 
     VkSubmitInfo submit_info{};
     submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -1054,6 +739,7 @@ void vk::context::draw_frame(const render_callback& tick) {
     } else assert_success(res);
 
     current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+    bound_pipeline = VK_NULL_HANDLE;
 }
 
 void vk::context::end_single_time_commands(VkCommandBuffer command_buffer) {
@@ -1252,7 +938,7 @@ u64 vk::context::phys_dev_score(VkPhysicalDevice dev) {
 
     /// Devices that support a higher MSAA sample count have a higher score.
     auto cnt = phys_max_usable_sample_count(dev);
-    switch(cnt) {
+    switch (cnt) {
         case VK_SAMPLE_COUNT_2_BIT: score += 50; break;
         case VK_SAMPLE_COUNT_4_BIT: score += 100; break;
         case VK_SAMPLE_COUNT_8_BIT: score += 150; break;
@@ -1296,8 +982,7 @@ auto vk::context::query_swap_chain_support(VkPhysicalDevice _Nonnull device) -> 
     return details;
 }
 
-void vk::context::record_command_buffer(const render_callback& tick,
-    VkCommandBuffer command_buffer, u32 img_index) {
+void vk::context::begin_recording_command_buffer(VkCommandBuffer command_buffer, u32 img_index) {
     /// Begin recording the command buffer.
     VkCommandBufferBeginInfo begin_info{};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -1319,26 +1004,24 @@ void vk::context::record_command_buffer(const render_callback& tick,
     render_pass_begin_info.pClearValues = clear_values;
 
     vkCmdBeginRenderPass(command_buffer, &render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
-    {
-        VkViewport viewport{};
-        viewport.x = 0.0f;
-        viewport.y = 0.0f;
-        viewport.width = float(swap_chain_extent.width);
-        viewport.height = float(swap_chain_extent.height);
-        viewport.minDepth = 0.0f;
-        viewport.maxDepth = 1.0f;
-        vkCmdSetViewport(command_buffer, 0, 1, &viewport);
 
-        VkRect2D scissor{};
-        scissor.offset = { 0, 0 };
-        scissor.extent = swap_chain_extent;
-        vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = float(swap_chain_extent.width);
+    viewport.height = float(swap_chain_extent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(command_buffer, 0, 1, &viewport);
 
-        vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
-        tick(command_buffer);
-    }
+    VkRect2D scissor{};
+    scissor.offset = { 0, 0 };
+    scissor.extent = swap_chain_extent;
+    vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+}
+
+void vk::context::end_recording_command_buffer(VkCommandBuffer command_buffer) {
     vkCmdEndRenderPass(command_buffer);
-
     assert_success(vkEndCommandBuffer(command_buffer), "failed to record command buffer");
 }
 
@@ -1403,23 +1086,6 @@ void vk::context::transition_image_layout(VkImage image, VkFormat, VkImageLayout
         1, &barrier);
 
     end_single_time_commands(command_buffer);
-}
-
-void vk::context::update_uniform_buffer(u32 current_image) {
-    static auto start_time = std::chrono::high_resolution_clock::now();
-    auto current_time = std::chrono::high_resolution_clock::now();
-    auto time = std::chrono::duration<f32, std::chrono::seconds::period>(current_time - start_time).count();
-
-    uniform_buffer_object ubo{};
-    ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    ubo.proj = glm::perspective(glm::radians(45.0f), f32(swap_chain_extent.width) / f32(swap_chain_extent.height), 0.1f, 10.0f);
-    ubo.proj[1][1] *= -1;
-
-    void* data;
-    vkMapMemory(device, uniform_buffers_memory[current_image], 0, sizeof(ubo), 0, &data);
-    memcpy(data, &ubo, sizeof(ubo));
-    vkUnmapMemory(device, uniform_buffers_memory[current_image]);
 }
 
 /// ======================================================================

@@ -8,7 +8,7 @@ struct context;
 struct renderer;
 
 struct model {
-    context* ctx;
+    renderer* r;
 
     /// Texture.
     VkImage texture_image;
@@ -22,18 +22,14 @@ struct model {
     /// Vertices and indices.
     vertex_buffer verts;
 
-    model(context* r, std::string_view texture_path, std::string_view obj_path);
+    model(renderer* r, std::string_view texture_path, std::string_view obj_path);
     ~model();
-
-    /// Draw the model. Returns the number of indices.
-    void draw(VkCommandBuffer command_buffer);
 
     /// Don't want to deal w/ this rn.
     nocopy(model);
     nomove(model);
 
     /// INTERNAL:
-    void create_descriptor_sets();
     void load_model(std::string_view obj_path);
     void load_texture(std::string_view texture_path);
 };

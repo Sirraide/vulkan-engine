@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <fmt/format.h>
 #include <vulkan/vulkan_core.h>
+#include <vector>
 
 #define CAT_(X, Y) X##Y
 #define CAT(X, Y)  CAT_(X, Y)
@@ -87,5 +88,7 @@ struct defer_type_operator_lhs {
     template <typename callable_t>
     auto operator%(callable_t rhs) -> defer_type<callable_t> { return defer_type<callable_t>(rhs); }
 };
+
+std::vector<char> map_file(std::string_view filename);
 
 #endif // VULKAN_TEMPLATE_UTILS_HH
