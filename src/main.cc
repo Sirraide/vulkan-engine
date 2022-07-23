@@ -14,7 +14,6 @@ using options = clopts< // clang-format off
 int main(int argc, char** argv) {
     auto opts = options::parse(argc, argv);
     vk::context ctx{ 1280, 720, "Vulkan Template" };
-    ctx.toggle_vsync(true);
 
     ctx.on_key_pressed = [](vk::context* ctx, int key, int scancode, int action, int mods) {
         (void) scancode;

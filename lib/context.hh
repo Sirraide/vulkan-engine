@@ -88,7 +88,7 @@ struct context {
     bool paused = false;
 
 private:
-    bool vsync = false;
+    bool vsync = true;
 public:
 
 #ifdef ENABLE_VALIDATION_LAYERS
