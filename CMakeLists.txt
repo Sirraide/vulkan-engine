@@ -8,14 +8,22 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR})
 add_compile_options(-fdiagnostics-color=always)
 
 ## Source files
-file(GLOB LIB lib/*.cc lib/*.hh)
+file(GLOB LIB
+        lib/*.cc lib/*.hh
+        imgui/*.cpp imgui/*.h
+        imgui/backends/imgui_impl_vulkan.h imgui/backends/imgui_impl_vulkan.cpp
+        imgui/backends/imgui_impl_glfw.h imgui/backends/imgui_impl_glfw.cpp)
 file(GLOB SRC src/*.cc src/*.hh)
 
 ## Compiler and linker options
 add_library(options INTERFACE)
+target_include_directories(options INTERFACE imgui)
 target_compile_options(options INTERFACE
         -Wall -Wextra -Wundef -Wconversion -Werror=return-type
-        -fno-rtti)
+        -fno-rtti
+        -Wno-sign-conversion
+        -Wno-implicit-int-float-conversion
+        )
 if (CMAKE_BUILD_TYPE STREQUAL Release)
     target_compile_options(options INTERFACE -O3 -DNDEBUG)
 else ()

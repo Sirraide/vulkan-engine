@@ -132,6 +132,11 @@ void vulkan_fini() {
 ///  Context
 /// ======================================================================
 vk::context::~context() {
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    vkDestroyDescriptorPool(device, imgui_descriptor_pool, nullptr);
+
     cleanup_swap_chain();
     vkDestroyRenderPass(device, render_pass, nullptr);
 
@@ -281,6 +286,8 @@ vk::context::context(int wd, int ht, std::string_view title) {
     create_depth_resources();
     create_framebuffers();
     create_sync_objects();
+
+    init_imgui();
 }
 
 void vk::context::pick_physical_device() {
@@ -552,6 +559,68 @@ void vk::context::create_sync_objects() {
         assert_success(vkCreateSemaphore(device, &semaphore_info, nullptr, &render_finished_semaphores[i]), "failed to create semaphore");
         assert_success(vkCreateFence(device, &fence_info, nullptr, &in_flight_fences[i]), "failed to create fence");
     }
+}
+
+void vk::context::init_imgui() {
+    /// Descriptor pool for IMGUI.
+    VkDescriptorPoolSize pool_sizes[] =
+        {
+            { VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
+            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
+            { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
+            { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
+            { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
+            { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
+            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
+            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
+            { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
+        };
+    VkDescriptorPoolCreateInfo pool_info = {};
+    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets = 1000 * (sizeof pool_sizes / sizeof *pool_sizes);
+    pool_info.poolSizeCount = u32(sizeof pool_sizes / sizeof *pool_sizes);
+    pool_info.pPoolSizes = pool_sizes;
+    assert_success(vkCreateDescriptorPool(device, &pool_info, nullptr, &imgui_descriptor_pool));
+
+    /// Initialise IMGUI.
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+
+    ImGui_ImplGlfw_InitForVulkan(window, true);
+    ImGui_ImplVulkan_InitInfo init_info = {};
+    init_info.Instance = instance;
+    init_info.PhysicalDevice = physical_device;
+    init_info.Device = device;
+
+    auto indices = find_queue_families(physical_device);
+    init_info.QueueFamily = indices.graphics_family.value();
+    init_info.Queue = graphics_queue;
+
+    init_info.PipelineCache = VK_NULL_HANDLE;
+    init_info.DescriptorPool = imgui_descriptor_pool;
+    init_info.Subpass = 0;
+    init_info.MinImageCount = MAX_FRAMES_IN_FLIGHT;
+    init_info.ImageCount = MAX_FRAMES_IN_FLIGHT;
+    init_info.MSAASamples = msaa_samples;
+    init_info.Allocator = VK_NULL_HANDLE;
+    init_info.CheckVkResultFn = [](VkResult err) {
+        if (err != VK_SUCCESS) {
+            fmt::print(stderr, "[ImGui] Vulkan Error: {}\n", err);
+            std::exit(1);
+        }
+    };
+    ImGui_ImplVulkan_Init(&init_info, render_pass);
+
+    /// Fonts.
+    auto cb = begin_single_time_commands();
+    ImGui_ImplVulkan_CreateFontsTexture(cb);
+    end_single_time_commands(cb);
+    assert_success(vkDeviceWaitIdle(device));
+    ImGui_ImplVulkan_DestroyFontUploadObjects();
 }
 
 auto vk::context::begin_single_time_commands() -> VkCommandBuffer {

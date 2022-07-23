@@ -10,6 +10,9 @@
 #include <GLFW/glfw3.h>
 #include <optional>
 #include <vulkan/vulkan.h>
+#include "../imgui/imgui.h"
+#include "../imgui/backends/imgui_impl_glfw.h"
+#include "../imgui/backends/imgui_impl_vulkan.h"
 
 #define MAX_FRAMES_IN_FLIGHT 2
 
@@ -75,6 +78,9 @@ struct context {
     VkDeviceMemory colour_image_memory;
     VkImageView colour_image_view;
 
+    /// IMGUI.
+    VkDescriptorPool imgui_descriptor_pool = VK_NULL_HANDLE;
+
     /// Window.
     GLFWwindow* window;
     kb_callback on_key_pressed = {};
@@ -126,6 +132,7 @@ public:
     void create_depth_resources();
     void create_command_buffers();
     void create_sync_objects();
+    void init_imgui();
 
     /// INTERNAL:
     auto begin_single_time_commands() -> VkCommandBuffer;

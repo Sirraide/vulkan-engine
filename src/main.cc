@@ -62,5 +62,12 @@ int main(int argc, char** argv) {
         static u64 rect_idx = 0;
         if (!ctx.paused) rect_idx = u64(time * 2) % (sizeof rects / sizeof *rects);
         geom_renderer.draw(command_buffer, rects[rect_idx]);
+
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+        ImGui::ShowDemoWindow();
+        ImGui::Render();
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), command_buffer);
     });
 }
