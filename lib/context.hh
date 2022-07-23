@@ -32,6 +32,7 @@ struct swap_chain_support_details {
 /// The Vulkan context.
 struct context {
     using render_callback = std::function<void(VkCommandBuffer)>;
+    using kb_callback =  std::function<void(context*, int, int, int, int)>;
 
     /// Device handles etc.
     VkCommandPool command_pool;
@@ -76,7 +77,13 @@ struct context {
 
     /// Window.
     GLFWwindow* window;
+    kb_callback on_key_pressed = {};
     bool resized = false;
+    bool paused = false;
+
+private:
+    bool vsync = false;
+public:
 
 #ifdef ENABLE_VALIDATION_LAYERS
     VkDebugUtilsMessengerEXT debug_messenger;
@@ -103,6 +110,9 @@ struct context {
 
     /// Whether the main loop should terminate.
     bool should_terminate();
+
+    /// Toggle vsync.
+    void toggle_vsync(bool enable_vsync);
 
     /// INTERNAL (Setup):
     void pick_physical_device();

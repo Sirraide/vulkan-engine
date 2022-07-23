@@ -13,6 +13,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <map>
 #include <set>
+#include <utility>
 #include <stb/stb_image.h>
 
 
@@ -179,6 +180,11 @@ vk::context::context(int wd, int ht, std::string_view title) {
         ctx->resized = true;
     });
 
+    glfwSetKeyCallback(window, [](GLFWwindow* w, int key, int scancode, int action, int mods) {
+        auto* ctx = (vk::context*) glfwGetWindowUserPointer(w);
+        ctx->on_key_pressed(ctx, key, scancode, action, mods);
+    });
+
     /// Make sure all required layers are available.
 #ifdef ENABLE_VALIDATION_LAYERS
     u32 layer_count = 0;
@@ -337,7 +343,7 @@ void vk::context::create_swap_chain() {
     /// Determine the information required for the swap chain.
     auto swap_chain_support = query_swap_chain_support(physical_device);
     VkSurfaceFormatKHR surface_format = choose_swap_surface_format(swap_chain_support.formats);
-    VkPresentModeKHR present_mode = choose_swap_present_mode(swap_chain_support.present_modes);
+    VkPresentModeKHR present_mode = vsync ? VK_PRESENT_MODE_FIFO_KHR : choose_swap_present_mode(swap_chain_support.present_modes);
     VkExtent2D extent = choose_swap_extent(swap_chain_support.capabilities, window);
 
     /// Determine the number of images in the swap chain.
@@ -1106,4 +1112,9 @@ void vk::context::run_forever(render_callback tick) {
 
 bool vk::context::should_terminate() {
     return glfwWindowShouldClose(window);
+}
+
+void vk::context::toggle_vsync(bool enable_vsync) {
+    vsync = enable_vsync;
+    recreate_swap_chain();
 }
