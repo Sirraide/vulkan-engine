@@ -4,6 +4,8 @@
 #include <stb/stb_image.h>
 #include <../3rdparty/tiny_obj_loader.h>
 
+vk::texture_instance::texture_instance(texture_model* m, push_constant value) : m(m), constant(value) {}
+
 vk::texture_model::texture_model(texture_renderer* r, std::string_view texture_path, std::string_view obj_path)
     : r(r) {
      load_texture(texture_path);

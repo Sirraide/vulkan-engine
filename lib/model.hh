@@ -34,6 +34,16 @@ struct texture_model {
     void load_texture(std::string_view texture_path);
 };
 
+struct texture_instance {
+    /// The model that this instance uses.
+    texture_model* m;
+
+    /// The transform to apply to the model.
+    push_constant constant;
+
+    texture_instance(texture_model* m, push_constant value = {});
+};
+
 } // namespace vk
 
 #endif // VULKAN_TEMPLATE_MODEL_HH

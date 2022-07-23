@@ -12,7 +12,11 @@ layout (binding = 0) uniform uniform_buffer_object {
     mat4 proj;
 } ubo;
 
+layout(push_constant) uniform push_constant {
+    mat4 transform;
+} push;
+
 void main() {
-    gl_Position = vec4(in_position, 1.0);
+    gl_Position = push.transform * vec4(in_position, 1.0);
     frag_colour = in_colour;
 }

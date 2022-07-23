@@ -2,6 +2,8 @@
 
 #include "context.hh"
 
+#define DESCRIPTOR_POOL_MAX_SIZE 1000
+
 #ifdef ENABLE_VALIDATION_LAYERS
 #    define CHECK_MOVE_PIPELINE(other)                                                 \
         do {                                                                           \
@@ -110,14 +112,14 @@ void vk::pipeline::create_descriptor_pool(const std::vector<VkDescriptorSetLayou
     std::vector<VkDescriptorPoolSize> pool_sizes{ descriptor_set_layout_bindings.size() };
     for (u64 i = 0; i < descriptor_set_layout_bindings.size(); ++i) {
         pool_sizes[i].type = descriptor_set_layout_bindings[i].descriptorType;
-        pool_sizes[i].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+        pool_sizes[i].descriptorCount = DESCRIPTOR_POOL_MAX_SIZE;
     }
 
     VkDescriptorPoolCreateInfo pool_info{};
     pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_info.poolSizeCount = u32(pool_sizes.size());
     pool_info.pPoolSizes = pool_sizes.data();
-    pool_info.maxSets = MAX_FRAMES_IN_FLIGHT;
+    pool_info.maxSets = DESCRIPTOR_POOL_MAX_SIZE * u32(pool_sizes.size());
     assert_success(vkCreateDescriptorPool(ctx->device, &pool_info, nullptr, &descriptor_pool), "failed to create descriptor pool");
 }
 
@@ -215,11 +217,19 @@ void vk::pipeline::create_graphics_pipeline(std::string_view vert_path, std::str
     depth_stencil_info.depthBoundsTestEnable = VK_FALSE;
     depth_stencil_info.stencilTestEnable = VK_FALSE;
 
+    /// Push constants.
+    VkPushConstantRange push_constant_range{};
+    push_constant_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    push_constant_range.offset = 0;
+    push_constant_range.size = sizeof(push_constant);
+
     /// Pipeline layout.
     VkPipelineLayoutCreateInfo pipeline_layout_info{};
     pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipeline_layout_info.setLayoutCount = 1;
     pipeline_layout_info.pSetLayouts = &descriptor_set_layout;
+    pipeline_layout_info.pushConstantRangeCount = 1;
+    pipeline_layout_info.pPushConstantRanges = &push_constant_range;
     assert_success(vkCreatePipelineLayout(ctx->device, &pipeline_layout_info, nullptr, &pipeline_layout), "failed to create pipeline layout");
 
     /// Finally, create the pipeline.
@@ -291,6 +301,7 @@ vk::texture_renderer::~texture_renderer() {
     if (graphics_pipeline != VK_NULL_HANDLE) vkDestroySampler(ctx->device, texture_sampler, nullptr);
 }
 
+/// FIXME: Multiple models doesn't work atm
 void vk::texture_renderer::create_descriptor_sets(std::vector<VkDescriptorSet>& descriptor_sets, VkImageView view) {
     allocate_descriptor_sets(descriptor_sets);
 
@@ -326,15 +337,16 @@ void vk::texture_renderer::create_descriptor_sets(std::vector<VkDescriptorSet>& 
     }
 }
 
-void vk::texture_renderer::draw(VkCommandBuffer command_buffer, const vk::texture_model& m) {
+void vk::texture_renderer::draw(VkCommandBuffer command_buffer, const vk::texture_instance& ti) {
     if (!bound()) {
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
         ctx->bound_pipeline = graphics_pipeline;
     }
 
-    m.verts.bind(command_buffer);
-    vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &m.descriptor_sets[ctx->current_frame], 0, nullptr);
-    vkCmdDrawIndexed(command_buffer, u32(m.verts.index_count), 1, 0, 0, 0);
+    ti.m->verts.bind(command_buffer);
+    vkCmdPushConstants(command_buffer, pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof ti.constant, &ti.constant);
+    vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &ti.m->descriptor_sets[ctx->current_frame], 0, nullptr);
+    vkCmdDrawIndexed(command_buffer, u32(ti.m->verts.index_count), 1, 0, 0, 0);
 }
 
 void vk::texture_renderer::create_texture_sampler() {
@@ -407,6 +419,7 @@ void vk::geometric_renderer::draw(VkCommandBuffer command_buffer, const vk::geom
     }
 
     g.verts.bind(command_buffer);
+    vkCmdPushConstants(command_buffer, pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof g.constant, &g.constant);
     vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &descriptor_sets[ctx->current_frame], 0, nullptr);
     vkCmdDrawIndexed(command_buffer, u32(g.verts.index_count), 1, 0, 0, 0);
 }

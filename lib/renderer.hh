@@ -20,6 +20,8 @@ struct context;
 
 /// Data that can be used by a geometric renderer.
 struct geometry {
+    push_constant constant;
+
     /// Vertices.
     vertex_buffer verts;
 };
@@ -68,7 +70,7 @@ struct texture_renderer : pipeline {
     RENDERER_CTORS(texture_renderer);
 
     /// Draw a model.
-    void draw(VkCommandBuffer command_buffer, const texture_model& m);
+    void draw(VkCommandBuffer command_buffer, const texture_instance& ti);
 
     /// Create the descriptor sets for a model.
     void create_descriptor_sets(std::vector<VkDescriptorSet>& descriptor_sets, VkImageView view);

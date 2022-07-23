@@ -57,6 +57,11 @@ struct uniform_buffer_object {
     alignas(16) glm::mat4 proj;
 };
 
+/// Simple push constant.
+struct push_constant {
+    glm::mat4 transform = glm::mat4(1.0f);
+};
+
 template <>
 struct std::hash<vertex> {
     size_t operator()(const vertex& v) const {
