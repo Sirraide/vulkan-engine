@@ -153,7 +153,6 @@ public:
     void recreate_swap_chain();
     void transition_image_layout(VkImage image, VkFormat format, VkImageLayout old_layout,
         VkImageLayout new_layout, u32 mip_lvls);
-    void update_uniform_buffer(u32 current_image);
 };
 
 } // namespace vk
