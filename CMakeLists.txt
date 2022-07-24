@@ -36,10 +36,8 @@ endif ()
 target_link_libraries(options INTERFACE fmt glfw vulkan dl pthread X11 Xxf86vm Xrandr Xi)
 
 ## Executables and libraries
-add_executable(vulkan-template ${SRC})
 add_library(vulkan-lib SHARED ${LIB} ${IMGUI})
 
 ## Apply the options
 target_link_libraries(vulkan-lib PRIVATE options)
-target_link_libraries(vulkan-template PRIVATE options vulkan-lib)
 
