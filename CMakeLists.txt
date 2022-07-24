@@ -2,7 +2,6 @@ cmake_minimum_required(VERSION 3.21)
 project(vulkan-template)
 
 ## Global flags
-set(CMAKE_CXX_COMPILER clang++)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR})
 add_compile_options(-fdiagnostics-color=always)
@@ -17,7 +16,7 @@ file(GLOB IMGUI
 set_source_files_properties(
         ${IMGUI}
         PROPERTIES
-        COMPILE_FLAGS "-Wno-sign-conversion -Wno-implicit-int-float-conversion")
+        COMPILE_FLAGS "-Wno-conversion -Wno-sign-conversion -Wno-implicit-int-float-conversion")
 
 ## Application source files
 file(GLOB SRC src/*.cc src/*.hh)
@@ -36,8 +35,8 @@ endif ()
 target_link_libraries(options INTERFACE fmt glfw vulkan dl pthread X11 Xxf86vm Xrandr Xi)
 
 ## Executables and libraries
-add_library(vulkan-lib SHARED ${LIB} ${IMGUI})
+add_library(vulkan-engine SHARED ${LIB} ${IMGUI})
 
 ## Apply the options
-target_link_libraries(vulkan-lib PRIVATE options)
+target_link_libraries(vulkan-engine PRIVATE options)
 

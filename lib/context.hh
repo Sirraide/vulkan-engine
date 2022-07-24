@@ -105,6 +105,10 @@ public:
     nocopy(context);
     nomove(context);
 
+    /// Begin/End a new IMGUI frame.
+    void ImGui_Begin();
+    void ImGui_End(VkCommandBuffer command_buffer);
+
     /// Bind a renderer to this context.
     void bind(texture_renderer& r);
 

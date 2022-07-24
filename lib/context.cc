@@ -1032,7 +1032,7 @@ u64 vk::context::phys_dev_score(VkPhysicalDevice dev) {
     return score;
 }
 
-auto vk::context::query_swap_chain_support(VkPhysicalDevice _Nonnull device) -> swap_chain_support_details {
+auto vk::context::query_swap_chain_support(VkPhysicalDevice device) -> swap_chain_support_details {
     swap_chain_support_details details{};
 
     /// Get the surface capabilities.
@@ -1166,6 +1166,17 @@ void vk::context::transition_image_layout(VkImage image, VkFormat, VkImageLayout
 /// ======================================================================
 ///  API
 /// ======================================================================
+void vk::context::ImGui_Begin() {
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+}
+
+void vk::context::ImGui_End(VkCommandBuffer command_buffer) {
+    ImGui::Render();
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), command_buffer);
+}
+
 void vk::context::poll() {
     glfwPollEvents();
 }

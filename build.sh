@@ -14,8 +14,6 @@ die() {
 build_type="Release"
 do_install="NO"
 cmake_only="NO"
-export CC=clang
-export CXX=clang++
 
 if test $# -ge 1; then
     case "$1" in
