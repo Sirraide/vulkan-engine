@@ -10,9 +10,13 @@
 #include <GLFW/glfw3.h>
 #include <optional>
 #include <vulkan/vulkan.h>
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wconversion"
 #include "../imgui/imgui.h"
 #include "../imgui/backends/imgui_impl_glfw.h"
 #include "../imgui/backends/imgui_impl_vulkan.h"
+#pragma GCC diagnostic pop
 
 #define MAX_FRAMES_IN_FLIGHT 2
 
