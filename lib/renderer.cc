@@ -492,5 +492,5 @@ auto vk::geometric_renderer::geometry_builder::rect(glm::vec2 a, glm::vec2 b, gl
 }
 
 vk::geometric_renderer::geometry_builder::operator geometry() const {
-    return { .verts = vertex_buffer(r->ctx, verts, indices) };
+    return {.constant = {}, .verts = vertex_buffer(r->ctx, verts, indices) };
 }
