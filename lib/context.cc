@@ -614,13 +614,6 @@ void vk::context::init_imgui() {
         }
     };
     ImGui_ImplVulkan_Init(&init_info, render_pass);
-
-    /// Fonts.
-    auto cb = begin_single_time_commands();
-    ImGui_ImplVulkan_CreateFontsTexture(cb);
-    end_single_time_commands(cb);
-    assert_success(vkDeviceWaitIdle(device));
-    ImGui_ImplVulkan_DestroyFontUploadObjects();
 }
 
 auto vk::context::begin_single_time_commands() -> VkCommandBuffer {
