@@ -8,14 +8,12 @@
 #include "vertex.hh"
 
 #include <algorithm>
-
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <map>
 #include <set>
-#include <utility>
 #include <stb/stb_image.h>
-
+#include <utility>
 
 using namespace vk;
 defer_type_operator_lhs defer_type_operator_lhs::instance;
@@ -563,20 +561,19 @@ void vk::context::create_sync_objects() {
 
 void vk::context::init_imgui() {
     /// Descriptor pool for IMGUI.
-    VkDescriptorPoolSize pool_sizes[] =
-        {
-            { VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
-            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
-            { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
-            { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
-            { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
-            { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
-            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
-            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
-            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
-            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
-            { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
-        };
+    VkDescriptorPoolSize pool_sizes[] = {
+        { VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
+        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
+        { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
+    };
     VkDescriptorPoolCreateInfo pool_info = {};
     pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
@@ -768,7 +765,9 @@ void vk::context::draw_frame(const render_callback& tick) {
     /// Record the command buffer.
     vkResetCommandBuffer(command_buffers[current_frame], 0);
     begin_recording_command_buffer(command_buffers[current_frame], image_index);
+    ImGui_Begin();
     tick(command_buffers[current_frame]);
+    ImGui_End(command_buffers[current_frame]);
     end_recording_command_buffer(command_buffers[current_frame]);
 
     /// Submit the command buffer.
@@ -1163,11 +1162,36 @@ void vk::context::ImGui_Begin() {
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+
+    if (main_font) ImGui::PushFont(main_font);
 }
 
 void vk::context::ImGui_End(VkCommandBuffer command_buffer) {
+    if (main_font) ImGui::PopFont();
+
     ImGui::Render();
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), command_buffer);
+}
+
+void vk::context::init_fonts(const std::vector<font_create_info>& fonts) {
+    ImGuiIO& io = ImGui::GetIO();
+
+    /// Add the fonts.
+    for (const auto& font : fonts) {
+        switch (font.type) {
+            case FONT_CREATE_INFO_TTF_TYPE:
+                *font.out_font = io.Fonts->AddFontFromFileTTF(font.path.data(), font.size);
+                continue;
+        }
+
+        die("[VKLIB] Unsupported font type: {}", font.type);
+    }
+
+    /// Upload them.
+    auto cb = begin_single_time_commands();
+    ImGui_ImplVulkan_CreateFontsTexture(cb);
+    end_single_time_commands(cb);
+    ImGui_ImplVulkan_DestroyFontUploadObjects();
 }
 
 void vk::context::poll() {

@@ -36,6 +36,17 @@ struct swap_chain_support_details {
     std::vector<VkPresentModeKHR> present_modes;
 };
 
+enum font_create_info_type {
+    FONT_CREATE_INFO_TTF_TYPE
+};
+
+struct font_create_info {
+    font_create_info_type type;
+    std::string_view path;
+    f32 size;
+    ImFont** out_font;
+};
+
 /// The Vulkan context.
 struct context {
     using render_callback = std::function<void(VkCommandBuffer)>;
@@ -84,6 +95,7 @@ struct context {
 
     /// IMGUI.
     VkDescriptorPool imgui_descriptor_pool = VK_NULL_HANDLE;
+    ImFont* main_font = nullptr;
 
     /// Window.
     GLFWwindow* window;
@@ -115,6 +127,9 @@ public:
 
     /// Bind a renderer to this context.
     void bind(texture_renderer& r);
+
+    /// Add fonts to the context. This may only be called once!
+    void init_fonts(const std::vector<font_create_info>& fonts);
 
     /// Poll window events.
     void poll();
