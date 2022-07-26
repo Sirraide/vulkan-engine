@@ -1179,9 +1179,11 @@ void vk::context::init_fonts(const std::vector<font_create_info>& fonts) {
     /// Add the fonts.
     for (const auto& font : fonts) {
         switch (font.type) {
-            case FONT_CREATE_INFO_TTF_TYPE:
-                *font.out_font = io.Fonts->AddFontFromFileTTF(font.path.data(), font.size);
+            case FONT_CREATE_INFO_TTF_TYPE: {
+                if (font.ranges.back() != 0) die("Font range must end with a single `0`");
+                *font.out_font = io.Fonts->AddFontFromFileTTF(font.path.data(), font.size, nullptr, font.ranges.data());
                 continue;
+            }
         }
 
         die("[VKLIB] Unsupported font type: {}", font.type);
@@ -1192,6 +1194,10 @@ void vk::context::init_fonts(const std::vector<font_create_info>& fonts) {
     ImGui_ImplVulkan_CreateFontsTexture(cb);
     end_single_time_commands(cb);
     ImGui_ImplVulkan_DestroyFontUploadObjects();
+
+    for (const auto& font : fonts)
+        if (!*font.out_font || !(*font.out_font)->IsLoaded())
+            die("Failed to load font \"{}\" for the requested range", font.path);
 }
 
 void vk::context::poll() {
@@ -1209,6 +1215,10 @@ void vk::context::run_forever(render_callback tick) {
 
 bool vk::context::should_terminate() {
     return glfwWindowShouldClose(window);
+}
+
+void vk::context::terminate() {
+    glfwSetWindowShouldClose(window, true);
 }
 
 void vk::context::toggle_vsync(bool enable_vsync) {

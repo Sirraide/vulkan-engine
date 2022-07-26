@@ -45,6 +45,7 @@ struct font_create_info {
     std::string_view path;
     f32 size;
     ImFont** out_font;
+    std::vector<ImWchar> ranges = { 0x20, 0xfffd, 0 };
 };
 
 /// The Vulkan context.
@@ -121,7 +122,7 @@ public:
     nocopy(context);
     nomove(context);
 
-    /// Begin/End a new IMGUI frame.
+    /// Begin/AtEnd a new IMGUI frame.
     void ImGui_Begin();
     void ImGui_End(VkCommandBuffer command_buffer);
 
@@ -139,6 +140,9 @@ public:
 
     /// Whether the main loop should terminate.
     bool should_terminate();
+
+    /// Terminate the main loop.
+    void terminate();
 
     /// Toggle vsync.
     void toggle_vsync(bool enable_vsync);

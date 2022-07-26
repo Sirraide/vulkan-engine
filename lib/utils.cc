@@ -4,6 +4,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+bool assertion_error::use_colour = true;
+
 std::vector<char> map_file(std::string_view filename) {
     int fd = ::open(filename.data(), O_RDONLY);
     if (fd < 0) [[unlikely]]

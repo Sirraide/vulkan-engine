@@ -37,6 +37,19 @@
 #    define ENABLE_VALIDATION_LAYERS
 #endif
 
+#define ASSERT(condition, ...)                                   \
+    do {                                                         \
+        if (!(condition))                                        \
+            throw assertion_error(STR(condition),                \
+                FILENAME,                                        \
+                __LINE__,                                        \
+                __PRETTY_FUNCTION__ __VA_OPT__(, ) __VA_ARGS__); \
+    } while (0)
+
+#define FILENAME (this_file_name())
+
+#define UNREACHABLE() ASSERT(false, "UNREACHABLE")
+
 #define defer auto CAT($$defer_struct_instance_, __COUNTER__) = defer_type_operator_lhs::instance % [&]
 
 typedef int8_t i8;
@@ -75,6 +88,67 @@ struct defer_type_operator_lhs {
     template <typename callable_t>
     auto operator%(callable_t rhs) -> defer_type<callable_t> { return defer_type<callable_t>(rhs); }
 };
+
+struct assertion_error : public std::runtime_error {
+    static bool use_colour;
+
+    explicit assertion_error(std::string&& message) : std::runtime_error(std::forward<std::string>(message)) {}
+    template <typename... args_t>
+
+    explicit assertion_error(const std::string& cond_mess, const char* file, int line, const char* pretty_function,
+        fmt::format_string<args_t...> fmt_str = "", args_t&&... args)
+        : std::runtime_error([&] {
+              std::string m;
+
+              /// The extra \033[m may seem superfluous, but having them as extra delimiters
+              /// makes translating the colour codes into html tags easier.
+              if (use_colour) {
+                  m        = fmt::format("\033[1;31mAssertion Error\033[m\033[33m\n"
+                                  "    In internal file\033[m \033[32m{}:{}\033[m\033[33m\n"
+                                  "    In function\033[m \033[32m{}\033[m\033[33m\n"
+                                  "    Assertion failed:\033[m \033[34m{}",
+                      file, line, pretty_function, cond_mess);
+                  auto str = fmt::format(fmt_str, std::forward<args_t>(args)...);
+                  if (!str.empty()) {
+                      m += fmt::format("\033[m\n\033[33m    Message:\033[m \033[31m");
+                      m += str;
+                  }
+                  m += "\033[m\n";
+              } else {
+                  m        = fmt::format("Assertion Error\n"
+                                  "    In internal file {}:{}\n"
+                                  "    In function {}\n"
+                                  "    Assertion failed: {}\n",
+                      file, line, pretty_function, cond_mess);
+                  auto str = fmt::format(fmt_str, std::forward<args_t>(args)...);
+                  if (!str.empty()) {
+                      m += fmt::format("    Message: ");
+                      m += str;
+                      m += "\n";
+                  }
+              }
+              return m;
+          }()) {}
+
+    template <typename... args_t>
+    explicit assertion_error(const assertion_error& other, args_t&&... args)
+        : std::runtime_error([&] {
+              std::string m{other.what()};
+              if (!m.ends_with("\n")) m += '\n';
+              ((m += args), ...);
+              return m;
+          }()) {}
+};
+
+consteval const char* this_file_name(const char* fname = __builtin_FILE()) {
+    const char *ptr = __builtin_strchr(fname, '/'), *last = ptr;
+    if (!last) return fname;
+    while (last) {
+        ptr  = last;
+        last = __builtin_strchr(last + 1, '/');
+    }
+    return ptr + 1;
+}
 
 std::vector<char> map_file(std::string_view filename);
 
