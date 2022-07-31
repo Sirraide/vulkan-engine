@@ -13,9 +13,9 @@
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wconversion"
-#include "../imgui/imgui.h"
 #include "../imgui/backends/imgui_impl_glfw.h"
 #include "../imgui/backends/imgui_impl_vulkan.h"
+#include "../imgui/imgui.h"
 #pragma GCC diagnostic pop
 
 #define MAX_FRAMES_IN_FLIGHT 2
@@ -51,7 +51,7 @@ struct font_create_info {
 /// The Vulkan context.
 struct context {
     using render_callback = std::function<void(VkCommandBuffer)>;
-    using kb_callback =  std::function<void(context*, int, int, int, int)>;
+    using kb_callback = std::function<void(context*, int, int, int, int)>;
 
     /// Device handles etc.
     VkCommandPool command_pool;
@@ -100,14 +100,14 @@ struct context {
 
     /// Window.
     GLFWwindow* window;
-    kb_callback on_key_pressed = {};
+    kb_callback on_key_pressed = [](context*, int, int, int, int) {};
     bool resized = false;
     bool paused = false;
 
 private:
     bool vsync = true;
-public:
 
+public:
 #ifdef ENABLE_VALIDATION_LAYERS
     VkDebugUtilsMessengerEXT debug_messenger;
 #endif
