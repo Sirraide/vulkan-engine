@@ -24,9 +24,9 @@ int main(int argc, char** argv) {
     };
 
     vk::texture_renderer renderer(&ctx, "out/tex_shader_vert.spv", "out/tex_shader_frag.spv");
-    vk::texture_model room_model(&renderer, "assets/viking_room.png", "assets/viking_room.obj");
-    vk::texture_instance room1{ &room_model, { glm::scale(glm::translate(glm::mat4{ 1.0f }, glm::vec3(-.5f, 0.f, 0.f)), glm::vec3(.5f)) } };
-    vk::texture_instance room2{ &room_model, { glm::scale(glm::translate(glm::mat4{ 1.0f }, glm::vec3(.5f, 0.f, 0.f)), glm::vec3(.5f)) } };
+    vk::model room_model(&renderer, "assets/viking_room.png", "assets/viking_room.obj");
+    vk::model_instance room1{ &room_model, { glm::scale(glm::translate(glm::mat4{ 1.0f }, glm::vec3(-.5f, 0.f, 0.f)), glm::vec3(.5f)) } };
+    vk::model_instance room2{ &room_model, { glm::scale(glm::translate(glm::mat4{ 1.0f }, glm::vec3(.5f, 0.f, 0.f)), glm::vec3(.5f)) } };
 
     vk::geometric_renderer geom_renderer(&ctx, "out/geom_shader_vert.spv", "out/geom_shader_frag.spv");
     vk::geometry rects[5] = {

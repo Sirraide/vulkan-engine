@@ -85,6 +85,13 @@ void vk::pipeline::allocate_descriptor_sets(std::vector<VkDescriptorSet>& descri
     assert_success(vkAllocateDescriptorSets(ctx->device, &alloc_info, descriptor_sets.data()), "failed to allocate descriptor sets");
 }
 
+void vk::pipeline::update_uniform_buffers(const std::function<void(uniform_buffer_object&)>& update_func) {
+    uniform_buffer_object* ubo;
+    vkMapMemory(ctx->device, uniform_buffers_memory[ctx->current_frame], 0, sizeof *ubo, 0, (void**)&ubo);
+    update_func(*ubo);
+    vkUnmapMemory(ctx->device, uniform_buffers_memory[ctx->current_frame]);
+}
+
 bool vk::pipeline::bound() const {
     return ctx->bound_pipeline == graphics_pipeline;
 }
@@ -337,10 +344,26 @@ void vk::texture_renderer::create_descriptor_sets(std::vector<VkDescriptorSet>& 
     }
 }
 
-void vk::texture_renderer::draw(VkCommandBuffer command_buffer, const vk::texture_instance& ti) {
+void vk::texture_renderer::draw(VkCommandBuffer command_buffer, const vk::model_instance& ti) {
     if (!bound()) {
         vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
         ctx->bound_pipeline = graphics_pipeline;
+
+        /// The texture renderer assumes that the viewport is a 1x1 square.
+        /// If this aspect ratio is not 1x1, then the texture will be stretched.
+        /// To fix this, scale whichever dimension is greater proportionally to the other.
+        update_uniform_buffers([&](uniform_buffer_object& ubo) {
+            f32 ht = f32(ctx->swap_chain_extent.height), wd = f32(ctx->swap_chain_extent.width), scale_x, scale_y;
+            if (wd > ht) {
+                scale_x = ht / wd;
+                scale_y = 1.f;
+            } else {
+                scale_x = 1.f;
+                scale_y = wd / ht;
+            }
+
+            ubo.proj = scale(glm::identity<glm::mat4>(), { scale_x, scale_y, 0.f, });
+        });
     }
 
     ti.m->verts.bind(command_buffer);
@@ -440,43 +463,14 @@ u32 vk::geometric_renderer::geometry_builder::add(const vertex& v) {
 }
 
 auto vk::geometric_renderer::geometry_builder::rect(glm::vec2 a, glm::vec2 b, glm::vec3 colour) -> geometry_builder& {
-    ///
-    /// Determine the corners of the rectangle such that rect_verts[0..3] are in anticlockwise order.
-    ///
-    vertex rect_verts[4]{};
-    rect_verts[0].pos = glm::vec3(a, 0.0f);
-    rect_verts[2].pos = glm::vec3(b, 0.0f);
-
-    glm::vec2 v = b - a;
-
-    /// a         /// a
-    ///           ///
-    ///        b  ///        b
-    if ((v.x > 0 && v.y > 0) || (v.x < 0 && v.y < 0)) {
-        rect_verts[1].pos = glm::vec3(a.x, a.y + v.y, 0.0f);
-        rect_verts[3].pos = glm::vec3(a.x + v.x, a.y, 0.0f);
-    }
-
-    ///        b  ///        a
-    ///           ///
-    /// a         /// b
-    else if ((v.x > 0 && v.y < 0) || (v.x < 0 && v.y > 0)) {
-        rect_verts[1].pos = glm::vec3(a.x + v.x, a.y, 0.0f);
-        rect_verts[3].pos = glm::vec3(a.x, a.y + v.y, 0.0f);
-    }
-
-    /// a       b
-    else {
-        rect_verts[1].pos = rect_verts[2].pos;
-        rect_verts[3].pos = rect_verts[0].pos;
-    }
+    std::vector<vertex> rect_verts = make_rectangle(a, b);
 
     ///
     /// Generate the rectangle.
     ///
     u32 rect_indices[4];
 
-    for (u64 i = 0; i < sizeof rect_verts / sizeof *rect_verts; ++i) {
+    for (u64 i = 0; i < rect_verts.size(); ++i) {
         rect_verts[i].colour = colour;
         rect_indices[i] = add(rect_verts[i]);
     }

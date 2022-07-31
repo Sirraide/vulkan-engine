@@ -54,6 +54,9 @@ struct pipeline {
     /// Allocate the descriptor sets for initialisation by the renderer.
     void allocate_descriptor_sets(std::vector<VkDescriptorSet>& descriptor_sets);
 
+    /// Update the uniform buffers.
+    void update_uniform_buffers(const std::function<void(uniform_buffer_object&)>& update_func);
+
     /// INTERNAL:
     void create_descriptor_set_layout(const std::vector<VkDescriptorSetLayoutBinding>& descriptor_set_layout_bindings);
     void create_uniform_buffers();
@@ -70,7 +73,7 @@ struct texture_renderer : pipeline {
     RENDERER_CTORS(texture_renderer);
 
     /// Draw a model.
-    void draw(VkCommandBuffer command_buffer, const texture_instance& ti);
+    void draw(VkCommandBuffer command_buffer, const model_instance& ti);
 
     /// Create the descriptor sets for a model.
     void create_descriptor_sets(std::vector<VkDescriptorSet>& descriptor_sets, VkImageView view);

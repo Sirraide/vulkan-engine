@@ -8,6 +8,8 @@
 #include <glm/gtx/hash.hpp>
 #include <vulkan/vulkan_core.h>
 
+#define QUAD_VERTICES { 0, 1, 2, 2, 3, 0 }
+
 struct vertex {
     glm::vec3 pos;
     glm::vec3 colour;
@@ -68,5 +70,7 @@ struct std::hash<vertex> {
         return ((std::hash<glm::vec3>()(v.pos) ^ (std::hash<glm::vec3>()(v.colour) << 1)) >> 1) ^ (std::hash<glm::vec2>()(v.tex_coord) << 1);
     }
 };
+
+std::vector<vertex> make_rectangle(glm::vec2 a, glm::vec2 b);
 
 #endif // VULKAN_TEMPLATE_VERTEX_HH

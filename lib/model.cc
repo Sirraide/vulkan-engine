@@ -1,25 +1,50 @@
 #include "model.hh"
+
 #include "context.hh"
 #include "renderer.hh"
-#include <stb/stb_image.h>
+
 #include <../3rdparty/tiny_obj_loader.h>
+#include <stb/stb_image.h>
 
-vk::texture_instance::texture_instance(texture_model* m, push_constant value) : m(m), constant(value) {}
+vk::model_instance::model_instance(model* m, push_constant value) : m(m), constant(value) {}
 
-vk::texture_model::texture_model(texture_renderer* r, std::string_view texture_path, std::string_view obj_path)
+vk::model::model(texture_renderer* r, std::string_view texture_path, std::string_view obj_path)
     : r(r) {
-     load_texture(texture_path);
-     load_model(obj_path);
-     r->create_descriptor_sets(descriptor_sets, texture_image_view);
+    load_texture(texture_path);
+    load_model(obj_path);
+    r->create_descriptor_sets(descriptor_sets, texture_image_view);
 }
 
-vk::texture_model::~texture_model() {
+vk::model::model(texture_renderer* r, std::string_view texture_path, glm::vec3 pos) : r(r) {
+    load_texture(texture_path);
+
+    /// Create a vertex buffer for the texture.
+    f32 wd, ht;
+    if (tex_height > tex_width) {
+        ht = 1.f;
+        wd = f32(tex_width) / f32(tex_height);
+    } else {
+        wd = 1.f;
+        ht = f32(tex_height) / f32(tex_width);
+    }
+
+    std::vector<vertex> vs;
+    vs.push_back({ { pos.x, pos.y, 1.0f }, {}, {},  { 0.0f, 0.0f } });
+    vs.push_back({ { 0.0f, pos.y + ht, 1.0f }, {}, {},  { 0.0f, 1.0f } });
+    vs.push_back({ { pos.x + wd, pos.y + ht, 1.0f }, {}, {},  { 1.0f, 1.0f } });
+    vs.push_back({ { pos.x + wd, pos.y, 1.0f }, {}, {},  { 1.0f, 0.0f } });
+    verts = vertex_buffer(r->ctx, vs, QUAD_VERTICES);
+
+    r->create_descriptor_sets(descriptor_sets, texture_image_view);
+}
+
+vk::model::~model() {
     vkDestroyImageView(r->ctx->device, texture_image_view, nullptr);
     vkDestroyImage(r->ctx->device, texture_image, nullptr);
     vkFreeMemory(r->ctx->device, texture_image_memory, nullptr);
 }
 
-void vk::texture_model::load_model(std::string_view obj_path) {
+void vk::model::load_model(std::string_view obj_path) {
     tinyobj::attrib_t attrib;
     std::vector<tinyobj::shape_t> shapes;
     std::vector<tinyobj::material_t> materials;
@@ -90,8 +115,7 @@ void vk::texture_model::load_model(std::string_view obj_path) {
     verts = vertex_buffer(r->ctx, vertices, indices);
 }
 
-void vk::texture_model::load_texture(std::string_view texture_path) {
-    int tex_width, tex_height, tex_channels;
+void vk::model::load_texture(std::string_view texture_path) {
     auto pixels = stbi_load(texture_path.data(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
     auto image_size = VkDeviceSize(tex_width) * VkDeviceSize(tex_height) * 4;
     if (!pixels) die("[STB] failed to load texture image \"{}\"", texture_path);
