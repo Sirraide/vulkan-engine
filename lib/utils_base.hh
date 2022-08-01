@@ -50,6 +50,13 @@
 
 #define UNREACHABLE() ASSERT(false, "UNREACHABLE")
 
+/// Check if an an expression is a valid enum value.
+#define ENUMERATOR(x, enumeration) __extension__({                                                      \
+    using temp_value_type = std::remove_cvref_t<decltype(x)>;                                              \
+    temp_value_type temp_value = x;                                                                        \
+    temp_value > temp_value_type(enumeration::$$min) && temp_value <= temp_value_type(enumeration::$$max); \
+})
+
 #define defer auto CAT($$defer_struct_instance_, __COUNTER__) = defer_type_operator_lhs::instance % [&]
 
 typedef int8_t i8;
@@ -94,10 +101,10 @@ struct defer_type {
     const callable_type function;
     explicit defer_type(callable_t _function) : function(_function) {}
     inline ~defer_type() { function(); }
-    defer_type(const defer_type&)            = delete;
-    defer_type(defer_type&&)                 = delete;
+    defer_type(const defer_type&) = delete;
+    defer_type(defer_type&&) = delete;
     defer_type& operator=(const defer_type&) = delete;
-    defer_type& operator=(defer_type&&)      = delete;
+    defer_type& operator=(defer_type&&) = delete;
 };
 
 struct defer_type_operator_lhs {
@@ -120,7 +127,7 @@ struct assertion_error : public std::runtime_error {
               /// The extra \033[m may seem superfluous, but having them as extra delimiters
               /// makes translating the colour codes into html tags easier.
               if (use_colour) {
-                  m        = fmt::format("\033[1;31mAssertion Error\033[m\033[33m\n"
+                  m = fmt::format("\033[1;31mAssertion Error\033[m\033[33m\n"
                                   "    In internal file\033[m \033[32m{}:{}\033[m\033[33m\n"
                                   "    In function\033[m \033[32m{}\033[m\033[33m\n"
                                   "    Assertion failed:\033[m \033[34m{}",
@@ -132,7 +139,7 @@ struct assertion_error : public std::runtime_error {
                   }
                   m += "\033[m\n";
               } else {
-                  m        = fmt::format("Assertion Error\n"
+                  m = fmt::format("Assertion Error\n"
                                   "    In internal file {}:{}\n"
                                   "    In function {}\n"
                                   "    Assertion failed: {}\n",
@@ -150,7 +157,7 @@ struct assertion_error : public std::runtime_error {
     template <typename... args_t>
     explicit assertion_error(const assertion_error& other, args_t&&... args)
         : std::runtime_error([&] {
-              std::string m{other.what()};
+              std::string m{ other.what() };
               if (!m.ends_with("\n")) m += '\n';
               ((m += args), ...);
               return m;
@@ -161,7 +168,7 @@ consteval const char* this_file_name(const char* fname = __builtin_FILE()) {
     const char *ptr = __builtin_strchr(fname, '/'), *last = ptr;
     if (!last) return fname;
     while (last) {
-        ptr  = last;
+        ptr = last;
         last = __builtin_strchr(last + 1, '/');
     }
     return ptr + 1;
