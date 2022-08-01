@@ -1,10 +1,21 @@
 #include "utils.hh"
+
+#include <chrono>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 bool assertion_error::use_colour = true;
+
+std::string current_time() {
+    /// Format the current time as hh:mm:ss.mmm using clock_gettime().
+    timespec ts{};
+    tm tm{};
+    clock_gettime(CLOCK_REALTIME, &ts);
+    localtime_r(&ts.tv_sec, &tm);
+    return fmt::format("{:02}:{:02}:{:02}.{:03}", tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec / 1000000);
+}
 
 std::vector<char> map_file(std::string_view filename) {
     int fd = ::open(filename.data(), O_RDONLY);

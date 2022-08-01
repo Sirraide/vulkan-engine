@@ -63,11 +63,28 @@ typedef uint64_t u64;
 typedef float f32;
 typedef double f64;
 
+/// Get the current time as hh:mm:ss.mmm.
+std::string current_time();
+
+template <typename... args_t>
+inline void info(fmt::format_string<args_t...> fmt_str, args_t&&... args) {
+    fmt::print(stderr, "\033[33m[{}] Info: ", current_time());
+    fmt::print(stderr, fmt_str, std::forward<args_t>(args)...);
+    fmt::print(stderr, "\033[m\n");
+}
+
+template <typename... args_t>
+inline void err(fmt::format_string<args_t...> fmt_str, args_t&&... args) {
+    fmt::print(stderr, "\033[31m[{}] Error:", current_time());
+    fmt::print(stderr, fmt_str, std::forward<args_t>(args)...);
+    fmt::print(stderr, "\033[m\n");
+}
+
 template <typename... args_t>
 [[noreturn]] inline void die(fmt::format_string<args_t...> fmt_str, args_t&&... args) {
-    fmt::print(stderr, "\033[31m[Fatal] ");
+    fmt::print(stderr, "\033[1;31m[{}] Fatal: ", current_time());
     fmt::print(stderr, fmt_str, std::forward<args_t>(args)...);
-    fmt::print(stderr, "\n");
+    fmt::print(stderr, "\033[m\n");
     std::exit(1);
 }
 
