@@ -65,6 +65,10 @@
 template <typename T, typename U>
 constexpr inline bool is = std::is_same_v<std::remove_cvref_t<T>, std::remove_cvref_t<U>>;
 
+/// Get the first element of a parameter pack.
+template <typename T, typename... Ts>
+constexpr inline T& car(T&& t, Ts&&... ts) { return std::forward<T>(t); }
+
 typedef int8_t i8;
 typedef int16_t i16;
 typedef int32_t i32;
@@ -133,7 +137,7 @@ template <typename... args_t>
     fmt::format_string<args_t...> fmt_str = "", args_t&&... args) {
     /// The extra \033[m may seem superfluous, but having them as extra delimiters
     /// makes translating the colour codes into html tags easier.
-    if (isatty(fileno(stderr))) {
+    if (isatty(STDERR_FILENO)) {
         fmt::print(stderr, "\033[1;31mAssertion Error\033[m\033[33m\n"
                            "    In internal file\033[m \033[32m{}:{}\033[m\033[33m\n"
                            "    In function\033[m \033[32m{}\033[m\033[33m\n"
@@ -155,7 +159,8 @@ template <typename... args_t>
         if (!str.empty()) fmt::print(stderr, "    Message: {}\n", str);
     }
 
-    std::exit(1);
+    fmt::print(stderr, "\033[33m    Stack trace:{}\n{}", isatty(STDERR_FILENO) ? "\033[m" : "", current_stacktrace());
+    _Exit(1);
 }
 
 consteval const char* this_file_name(const char* fname = __builtin_FILE()) {
