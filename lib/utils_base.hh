@@ -79,6 +79,9 @@ typedef double f64;
 /// Get the current time as hh:mm:ss.mmm.
 std::string current_time();
 
+/// Get the current stacktrace.
+std::string current_stacktrace();
+
 template <typename... args_t>
 inline void info(fmt::format_string<args_t...> fmt_str, args_t&&... args) {
     fmt::print(stderr, "\033[33m[{}] Info: ", current_time());
@@ -90,6 +93,9 @@ template <typename... args_t>
 inline void err(fmt::format_string<args_t...> fmt_str, args_t&&... args) {
     fmt::print(stderr, "\033[31m[{}] Error: ", current_time());
     fmt::print(stderr, fmt_str, std::forward<args_t>(args)...);
+#ifdef ENABLE_VALIDATION_LAYERS
+    fmt::print(stderr, "\n{}", current_stacktrace());
+#endif
     fmt::print(stderr, "\033[m\n");
 }
 
@@ -97,6 +103,9 @@ template <typename... args_t>
 [[noreturn]] inline void die(fmt::format_string<args_t...> fmt_str, args_t&&... args) {
     fmt::print(stderr, "\033[1;31m[{}] Fatal: ", current_time());
     fmt::print(stderr, fmt_str, std::forward<args_t>(args)...);
+#ifdef ENABLE_VALIDATION_LAYERS
+    fmt::print(stderr, "\n{}", current_stacktrace());
+#endif
     fmt::print(stderr, "\033[m\n");
     std::exit(1);
 }
