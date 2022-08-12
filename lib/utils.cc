@@ -6,8 +6,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-bool assertion_error::use_colour = true;
-
 std::string current_time() {
     /// Format the current time as hh:mm:ss.mmm using clock_gettime().
     timespec ts{};
