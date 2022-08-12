@@ -40,7 +40,7 @@
 #define ASSERT(condition, ...)                                   \
     do {                                                         \
         if (!(condition))                                        \
-            assertion_error(STR(condition),                      \
+            assertion_error(#condition,                          \
                 FILENAME,                                        \
                 __LINE__,                                        \
                 __PRETTY_FUNCTION__ __VA_OPT__(, ) __VA_ARGS__); \
@@ -52,11 +52,11 @@
 
 #define RAISE_COMPILE_ERROR(msg) ([]<bool _b = false> { static_assert(_b, msg); }())
 
-/// Check if an an expression is a valid enum value.
+/// Check if (enumeration::$$min <= x && x <= enumeration::$$max)
 #define ENUMERATOR(x, enumeration) __extension__({                                                         \
     using temp_value_type = std::remove_cvref_t<decltype(x)>;                                              \
     temp_value_type temp_value = x;                                                                        \
-    temp_value > temp_value_type(enumeration::$$min) && temp_value <= temp_value_type(enumeration::$$max); \
+    temp_value >= temp_value_type(enumeration::$$min) && temp_value <= temp_value_type(enumeration::$$max); \
 })
 
 #define defer auto CAT($$defer_struct_instance_, __COUNTER__) = defer_type_operator_lhs::instance % [&]
