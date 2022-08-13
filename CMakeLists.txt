@@ -30,8 +30,8 @@ target_compile_options(options INTERFACE
 if (CMAKE_BUILD_TYPE STREQUAL Release)
     target_compile_options(options INTERFACE -O3 -DNDEBUG)
 else ()
-    target_compile_options(options INTERFACE -O0 -ggdb -rdynamic -fno-omit-frame-pointer)
-    target_link_options(options INTERFACE -O0 -ggdb -rdynamic -fno-omit-frame-pointer)
+    target_compile_options(options INTERFACE -O0 -ggdb -fno-omit-frame-pointer)
+    target_link_options(options INTERFACE -O0 -ggdb -Wl,--export-dynamic -fno-omit-frame-pointer)
 endif ()
 target_link_libraries(options INTERFACE fmt glfw vulkan dl pthread X11 Xxf86vm Xrandr Xi stdc++_libbacktrace)
 

@@ -67,7 +67,7 @@ constexpr inline bool is = std::is_same_v<std::remove_cvref_t<T>, std::remove_cv
 
 /// Get the first element of a parameter pack.
 template <typename T, typename... Ts>
-constexpr inline T& car(T&& t, Ts&&... ts) { return std::forward<T>(t); }
+constexpr inline T& car(T&& t, Ts&&...) { return std::forward<T>(t); }
 
 typedef int8_t i8;
 typedef int16_t i16;
