@@ -132,6 +132,8 @@ void vulkan_fini() {
 ///  Context
 /// ======================================================================
 vk::context::~context() {
+    for (auto it = cleanup_callbacks.rbegin(); it != cleanup_callbacks.rend(); ++it) (*it)(this);
+
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

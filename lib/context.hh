@@ -52,6 +52,7 @@ struct font_create_info {
 struct context {
     using render_callback = std::function<void(VkCommandBuffer)>;
     using kb_callback = std::function<void(context*, int, int, int, int)>;
+    using cleanup_callback = std::function<void(context*)>;
 
     /// Device handles etc.
     VkCommandPool command_pool;
@@ -103,6 +104,11 @@ struct context {
     kb_callback on_key_pressed = [](context*, int, int, int, int) {};
     bool resized = false;
     bool paused = false;
+
+    /// Cleanup.
+    /// Callbacks to call when the context is destroyed.
+    /// These are called in the reverse order that they were added.
+    std::vector<cleanup_callback> cleanup_callbacks;
 
 private:
     bool vsync = true;
