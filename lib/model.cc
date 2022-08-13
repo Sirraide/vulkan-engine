@@ -4,7 +4,9 @@
 #include "renderer.hh"
 
 #include <../3rdparty/tiny_obj_loader.h>
+#include <filesystem>
 #include <stb/stb_image.h>
+namespace fs = std::filesystem;
 
 vk::model_instance::model_instance(model* m, push_constant value) : m(m), constant(value) {}
 
@@ -29,10 +31,10 @@ vk::model::model(texture_renderer* r, std::string_view texture_path, glm::vec3 p
     }
 
     std::vector<vertex> vs;
-    vs.push_back({ { pos.x, pos.y, 1.0f }, {}, {},  { 0.0f, 0.0f } });
-    vs.push_back({ { 0.0f, pos.y + ht, 1.0f }, {}, {},  { 0.0f, 1.0f } });
-    vs.push_back({ { pos.x + wd, pos.y + ht, 1.0f }, {}, {},  { 1.0f, 1.0f } });
-    vs.push_back({ { pos.x + wd, pos.y, 1.0f }, {}, {},  { 1.0f, 0.0f } });
+    vs.push_back({ { pos.x, pos.y, 1.0f }, {}, {}, { 0.0f, 0.0f } });
+    vs.push_back({ { 0.0f, pos.y + ht, 1.0f }, {}, {}, { 0.0f, 1.0f } });
+    vs.push_back({ { pos.x + wd, pos.y + ht, 1.0f }, {}, {}, { 1.0f, 1.0f } });
+    vs.push_back({ { pos.x + wd, pos.y, 1.0f }, {}, {}, { 1.0f, 0.0f } });
     verts = vertex_buffer(r->ctx, vs, QUAD_VERTICES);
 
     r->create_descriptor_sets(descriptor_sets, texture_image_view);
@@ -116,9 +118,26 @@ void vk::model::load_model(std::string_view obj_path) {
 }
 
 void vk::model::load_texture(std::string_view texture_path) {
-    auto pixels = stbi_load(texture_path.data(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
-    auto image_size = VkDeviceSize(tex_width) * VkDeviceSize(tex_height) * 4;
-    if (!pixels) die("[STB] failed to load texture image \"{}\"", texture_path);
+    static const stbi_uc default_texture_pixels[4] = { 255, 255, 255, 255 };
+    stbi_uc* pixels;
+    VkDeviceSize image_size;
+
+    /// Only load the texture if it exists.
+    bool file_exists = fs::exists(texture_path);
+    if (file_exists) {
+        pixels = stbi_load(texture_path.data(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
+        image_size = VkDeviceSize(tex_width) * VkDeviceSize(tex_height) * 4;
+        if (!pixels) die("[STB] failed to load texture image \"{}\"", texture_path);
+    }
+
+    /// Otherwise, create a dummy texture.
+    else {
+        tex_width = 1;
+        tex_height = 1;
+        tex_channels = 4;
+        pixels = const_cast<stbi_uc*>(default_texture_pixels);
+        image_size = 4;
+    }
 
     mip_levels = u32(std::floor(std::log2(std::max(tex_width, tex_height)))) + 1;
 
@@ -132,7 +151,7 @@ void vk::model::load_texture(std::string_view texture_path) {
     memcpy(data, pixels, image_size);
     vkUnmapMemory(r->ctx->device, staging_buffer_memory);
 
-    stbi_image_free(pixels);
+    if (file_exists) stbi_image_free(pixels);
 
     r->ctx->create_image(u32(tex_width), u32(tex_height), mip_levels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
         VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
